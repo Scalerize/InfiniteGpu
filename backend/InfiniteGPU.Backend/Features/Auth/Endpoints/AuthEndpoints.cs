@@ -27,8 +27,15 @@ public static class AuthEndpoints
 
         group.MapPost("/forgot-password", async (IMediator mediator, [FromBody] ForgotPasswordCommand command) =>
         {
-            await mediator.Send(command);
-            return Results.Accepted();
+            try
+            {
+                await mediator.Send(command);
+                return Results.Accepted();
+            }
+            catch (Exception ex)
+            {
+                return Results.BadRequest(new { Error = ex.Message });
+            }
         });
 
         group.MapPost("/reset-password", async (IMediator mediator, [FromBody] ResetPasswordCommand command) =>
