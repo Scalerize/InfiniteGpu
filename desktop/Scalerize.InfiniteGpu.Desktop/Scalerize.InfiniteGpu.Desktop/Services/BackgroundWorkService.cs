@@ -221,12 +221,21 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         _hubConnection = connection;
                     }
 
-                    // Collect hardware metrics to get total RAM
-                    long? totalRamBytes = null;
-                    var metrics = _hardwareMetricsService.GetMemoryInfo();
-                    totalRamBytes = (long)(metrics.TotalGb.Value * 1024 * 1024 * 1024);
+                    // Collect hardware capabilities including CPU, GPU, NPU TOPS and total RAM
+                    var cpuInfo = _hardwareMetricsService.GetCpuInfo();
+                    var gpuInfo = _hardwareMetricsService.GetGpuInfo();
+                    var npuInfo = _hardwareMetricsService.GetNpuInfo();
+                    var memoryInfo = _hardwareMetricsService.GetMemoryInfo();
 
-                    await connection.InvokeAsync("JoinAvailableTasks", string.Empty, "Provider", totalRamBytes, cancellationToken).ConfigureAwait(false);
+                    var hardwareCapabilities = new
+                    {
+                        CpuEstimatedTops = cpuInfo.EstimatedTops,
+                        GpuEstimatedTops = gpuInfo?.EstimatedTops,
+                        NpuEstimatedTops = npuInfo?.EstimatedTops,
+                        TotalRamBytes = (long)(memoryInfo.TotalGb.Value * 1024 * 1024 * 1024)
+                    };
+
+                    await connection.InvokeAsync("JoinAvailableTasks", string.Empty, "Provider", hardwareCapabilities, cancellationToken).ConfigureAwait(false);
 
                     while (!cancellationToken.IsCancellationRequested)
                     {

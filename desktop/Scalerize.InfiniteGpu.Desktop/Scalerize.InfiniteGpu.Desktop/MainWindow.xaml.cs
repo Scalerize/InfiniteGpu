@@ -478,7 +478,11 @@ namespace Scalerize.InfiniteGpu.Desktop
                 ["networkDownlinkMbps"] = snapshot.Network.DownlinkMbps,
                 ["networkLatencyMs"] = snapshot.Network.LatencyMs,
                 ["storageFreeGb"] = snapshot.Storage.FreeGb,
-                ["storageTotalGb"] = snapshot.Storage.TotalGb
+                ["storageTotalGb"] = snapshot.Storage.TotalGb,
+                ["cpuTops"] = snapshot.Cpu.EstimatedTops,
+                ["gpuTops"] = snapshot.Gpu.EstimatedTops,
+                ["npuTops"] = snapshot.Npu?.EstimatedTops,
+                ["hasNpu"] = snapshot.Npu is not null
             };
 
             return result;

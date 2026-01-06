@@ -24,7 +24,7 @@ public class TaskHub : Hub
     private static readonly ConcurrentDictionary<string, string> ConnectionToProviderMap = new();
     private static readonly ConcurrentDictionary<string, Guid> ConnectionToDeviceMap = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>> DeviceConnections = new();
-    private static readonly ConcurrentDictionary<Guid, long> DeviceRamBytes = new();
+    private static readonly ConcurrentDictionary<Guid, HardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
 
     public const string ProvidersGroupName = "Providers";
     public const string OnSubtaskAcceptedEvent = "OnSubtaskAccepted";
@@ -159,7 +159,7 @@ public class TaskHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task JoinAvailableTasks(string userId, string role, long? totalRamBytes = null)
+    public async Task JoinAvailableTasks(string userId, string role, HardwareCapabilitiesDto? hardwareCapabilities = null)
     {
         var normalizedUserId = string.IsNullOrWhiteSpace(CurrentUserId) ? userId : CurrentUserId!;
 
@@ -175,10 +175,10 @@ public class TaskHub : Hub
             await Groups.AddToGroupAsync(Context.ConnectionId, ProviderGroupName(normalizedUserId));
             RegisterProviderConnection(normalizedUserId, Context.ConnectionId);
 
-            // Update device RAM in memory if provided
-            if (totalRamBytes.HasValue && ConnectionToDeviceMap.TryGetValue(Context.ConnectionId, out var deviceId))
+            // Update device hardware capabilities in memory if provided
+            if (hardwareCapabilities is not null && ConnectionToDeviceMap.TryGetValue(Context.ConnectionId, out var deviceId))
             {
-                DeviceRamBytes[deviceId] = totalRamBytes.Value;
+                DeviceHardwareCapabilities[deviceId] = hardwareCapabilities;
             }
         }
 
@@ -850,30 +850,12 @@ public class TaskHub : Hub
             if (deviceConnections.IsEmpty)
             {
                 DeviceConnections.TryRemove(deviceId, out _);
-                // Also remove RAM data when device fully disconnects
-                DeviceRamBytes.TryRemove(deviceId, out _);
+                // Also remove hardware capabilities data when device fully disconnects
+                DeviceHardwareCapabilities.TryRemove(deviceId, out _);
             }
         }
 
         return (providerUserId, hasDevice ? deviceId : null, deviceStillConnected);
-    }
-
-    private static Guid? GetPrimaryDeviceId(string providerUserId)
-    {
-        if (!ProviderConnections.TryGetValue(providerUserId, out var connections) || connections.IsEmpty)
-        {
-            return null;
-        }
-
-        foreach (var entry in connections)
-        {
-            if (entry.Value != Guid.Empty)
-            {
-                return entry.Value;
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
@@ -1016,8 +998,10 @@ public class TaskHub : Hub
 
         foreach (var (deviceId, providerUserId) in devices)
         {
-            // Get RAM from in-memory storage
-            var ram = DeviceRamBytes.TryGetValue(deviceId, out var ramBytes) ? ramBytes : 0;
+            // Get RAM from hardware capabilities in-memory storage
+            var ram = DeviceHardwareCapabilities.TryGetValue(deviceId, out var capabilities)
+                ? capabilities.TotalRamBytes
+                : 0;
             deviceRamPairs.Add((deviceId, providerUserId, ram));
         }
 

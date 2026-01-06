@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Hardware.Info;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Scalerize.InfiniteGpu.Desktop.Constants;
@@ -137,6 +138,7 @@ namespace Scalerize.InfiniteGpu.Desktop
             services.AddSingleton<OnnxParsingService>();
             services.AddSingleton<OnnxPartitionerService>();
             services.AddSingleton<OnnxSizeService>();
+            services.AddSingleton<HardwareInfo>(); 
             services.AddSingleton<HardwareMetricsService>();
             services.AddSingleton<DeviceIdentifierService>();
             services.AddSingleton<WebViewCommunicationService>();

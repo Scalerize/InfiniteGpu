@@ -1,10 +1,14 @@
+using Hardware.Info;
 using System;
 using System.IO;
 using System.Linq;
 using System.Management;
 using System.Net.NetworkInformation;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using OpenCL.Net;
 
 namespace Scalerize.InfiniteGpu.Desktop.Services
 {
@@ -16,9 +20,9 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         double? VideoRamGb,
         int? Cores,
         double? FrequencyMhz,
-        double? MemoryClockMhz);
+        double? EstimatedTops);
 
-    public record CpuInfosDto(int Cores, double FrequencyGhz);
+    public record CpuInfosDto(int Cores, double FrequencyGhz, double? EstimatedTops);
 
     public record NetworkInfosDto(double? DownlinkMbps, double? LatencyMs);
 
@@ -26,12 +30,17 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
     public record MemoryInfosDto(double? TotalGb, double? AvailableGb);
 
-    public record NpuInfosDto(string? Name, double? Tops, double? FrequencyMhz);
+    public record NpuInfosDto(string? Name, double? EstimatedTops);
 
     public sealed class HardwareMetricsService
     {
         private static readonly string[] LatencyTargets = { "1.1.1.1", "8.8.8.8" };
+        private HardwareInfo _hardwareInfo;
 
+        public HardwareMetricsService()
+        {
+            _hardwareInfo = new HardwareInfo();
+        }
         public Task<HardwareMetricsSnapshot> CollectAsync(CancellationToken cancellationToken = default)
         {
             return Task.Run(() => CollectInternal(cancellationToken), cancellationToken);
@@ -51,57 +60,136 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
         public CpuInfosDto GetCpuInfo()
         {
-            using var searcher =
-                new ManagementObjectSearcher("SELECT NumberOfCores, MaxClockSpeed FROM Win32_Processor");
-            using var results = searcher.Get();
-
-            var totalCores = 0;
-            double maxClockMhz = 0;
-
-            foreach (var obj in results.Cast<ManagementObject>())
-            {
-                totalCores += Convert.ToInt32(obj["NumberOfCores"]);
-                maxClockMhz = Math.Max(maxClockMhz, Convert.ToInt32(obj["MaxClockSpeed"]));
-            }
-
-            if (totalCores <= 0)
-            {
-                totalCores = Environment.ProcessorCount;
-            }
-
-            double? frequencyGhz = maxClockMhz / 1000;
-
-            return new(totalCores > 0 ? totalCores : Environment.ProcessorCount, frequencyGhz.GetValueOrDefault());
+            _hardwareInfo.RefreshCPUList();
+            var cores = _hardwareInfo.CpuList.Sum(x => (int)x.NumberOfCores);
+            var frequencyMhz = _hardwareInfo.CpuList.Average(x => x.CurrentClockSpeed);
+            var frequencyGhz = frequencyMhz / 1000.0;
+            
+            // Estimate CPU TOPS (Tera Operations Per Second)
+            // Modern CPUs with SIMD instructions (AVX2/AVX-512) can perform multiple operations per cycle
+            // For INT8 operations: Cores * Frequency(GHz) * Operations_per_cycle
+            // Assuming AVX2 (256-bit): ~32 INT8 ops/cycle per core
+            // This is a conservative estimate; actual performance varies by CPU architecture
+            double? estimatedTops = cores > 0 && frequencyGhz > 0
+                ? cores * frequencyGhz * 32.0 / 1000.0  
+                : null;
+            
+            return new(cores, frequencyGhz, estimatedTops);
         }
 
         public GpuInfosDto GetGpuInfo()
         {
-            using var searcher = new ManagementObjectSearcher("SELECT * FROM Win32_VideoController");
-            using var results = searcher.Get();
+            try
+            {
+                // Get OpenCL platforms
+                ErrorCode error;
+                uint platformCount = 0;
+                error = Cl.GetPlatformIDs(0, null, out platformCount);
+                if (error != ErrorCode.Success || platformCount == 0)
+                {
+                    return null;
+                }
 
-            var gpu = results.Cast<ManagementObject>().FirstOrDefault();
-            if (gpu is null)
+                Platform[] platforms = new Platform[platformCount];
+                error = Cl.GetPlatformIDs(platformCount, platforms, out platformCount);
+                if (error != ErrorCode.Success)
+                {
+                    return null;
+                }
+
+                // Iterate through platforms to find a GPU device
+                foreach (var platform in platforms)
+                {
+                    uint deviceCount = 0;
+                    error = Cl.GetDeviceIDs(platform, DeviceType.Gpu, 0, null, out deviceCount);
+                    if (error != ErrorCode.Success || deviceCount == 0)
+                    {
+                        continue;
+                    }
+
+                    Device[] devices = new Device[deviceCount];
+                    error = Cl.GetDeviceIDs(platform, DeviceType.Gpu, deviceCount, devices, out deviceCount);
+                    if (error != ErrorCode.Success || deviceCount == 0)
+                    {
+                        continue;
+                    }
+
+                    // Use the first GPU device found
+                    var device = devices[0];
+
+                    // Get compute units (cores)
+                    var cores = GetDeviceInfoValue<uint>(device, DeviceInfo.MaxComputeUnits);
+
+                    // Get global memory size (VRAM)
+                    var memoryBytes = GetDeviceInfoValue<ulong>(device, DeviceInfo.GlobalMemSize);
+                    double? videoRamGb = memoryBytes.HasValue
+                        ? memoryBytes.Value / 1024.0 / 1024.0 / 1024.0
+                        : null;
+
+                    // Get clock frequency
+                    var frequencyMhz = GetDeviceInfoValue<uint>(device, DeviceInfo.MaxClockFrequency);
+
+                    // Estimate TOPS (Tera Operations Per Second)
+                    double? estimatedTops = null;
+                    if (cores.HasValue && frequencyMhz.HasValue)
+                    {
+                        // Basic estimation: cores * frequency * 2 (for FMA operations)
+                        // This is a rough estimate and varies by GPU architecture
+                        // FP32 FLOPS = Cores * Clock(GHz) * Operations_per_cycle
+                        // For most GPUs, we assume 2 FLOPs per cycle (FMA instruction)
+                        double frequencyGhz = frequencyMhz.Value / 1000.0;
+                        estimatedTops = cores.Value * frequencyGhz * 2.0;
+                    }
+
+                    _hardwareInfo.RefreshVideoControllerList();
+
+                    var name = _hardwareInfo.VideoControllerList.FirstOrDefault()?.Name;
+                    var vendor = _hardwareInfo.VideoControllerList.FirstOrDefault()?.Manufacturer;
+
+                    return new GpuInfosDto(
+                        name,
+                        vendor,
+                        videoRamGb,
+                        cores.HasValue ? (int)cores.Value : null,
+                        frequencyMhz.HasValue ? (double)frequencyMhz.Value : null,
+                        estimatedTops);
+                }
+
+                return null;
+            }
+            catch
             {
                 return null;
             }
-
-            var name = gpu["Name"] as string;
-            var vendor = gpu["AdapterCompatibility"] as string;
-            var videoRam = Convert.ToDouble(gpu["AdapterRAM"]);
-            double? ToGb(double? b) => b.HasValue ? b.Value / 1024d / 1024d / 1024d : null;
-
-            int? cores = null;
-            var videoProcessor = gpu["VideoProcessor"] as string;
-
-            // Try to get current clock speeds
-            double? frequencyMhz = null;
-            double? memoryClockMhz = null;
-
-            // Some drivers expose clock speeds through WMI
-            frequencyMhz = Convert.ToDouble(gpu["CurrentClockSpeed"]);
-
-            return new(name, vendor, ToGb(videoRam), cores, frequencyMhz, memoryClockMhz);
         }
+
+        private T? GetDeviceInfoValue<T>(Device device, DeviceInfo info) where T : struct
+        {
+            try
+            {
+                ErrorCode error;
+                IntPtr paramValueSize;
+                error = Cl.GetDeviceInfo(device, info, IntPtr.Zero, InfoBuffer.Empty, out paramValueSize);
+                if (error != ErrorCode.Success || paramValueSize == IntPtr.Zero)
+                {
+                    return null;
+                }
+
+                InfoBuffer buffer = new InfoBuffer(paramValueSize);
+                error = Cl.GetDeviceInfo(device, info, paramValueSize, buffer, out paramValueSize);
+                if (error != ErrorCode.Success)
+                {
+                    return null;
+                }
+
+                return buffer.CastTo<T>();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
 
         public NpuInfosDto GetNpuInfo()
         {
@@ -121,14 +209,13 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         name, @"(\d+(?:\.\d+)?)\s*TOPS",
                         System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
-                    double? tops = null;
+                    double? tops = 40; // Minimum requirements from copilot pc specs
                     if (topsMatch.Success && double.TryParse(topsMatch.Groups[1].Value, out var topsValue))
                     {
                         tops = topsValue;
                     }
 
-                    // Frequency info is typically not available via WMI for NPUs
-                    return new(name, tops, null);
+                    return new(name, tops);
                 }
             }
 
@@ -158,7 +245,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
         public StorageInfosDto GetStorageInfo()
         {
-            var systemRoot = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.System)) ??
+            var systemRoot = Path.GetPathRoot(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System)) ??
                              string.Empty;
             var drives = DriveInfo.GetDrives().Where(drive => drive.IsReady).ToArray();
 
