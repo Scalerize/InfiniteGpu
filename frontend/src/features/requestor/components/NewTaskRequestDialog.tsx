@@ -735,17 +735,19 @@ export const NewTaskRequestDialog = ({
                 setOnnxFileName(file?.name ?? null);
               }}
             />
-            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-              Plenty of ONNX models can be found at{" "}
-              <a
-                href="https://github.com/onnx/models"
-                target="_blank"
-                rel="noreferrer"
-                className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
-              >
-                https://github.com/onnx/models
-              </a>
-            </p>
+            <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+              <p className="font-medium text-slate-700 dark:text-slate-300">
+                Plenty of ONNX models can be found at{" "}
+                <a
+                  href="https://github.com/onnx/models"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  https://github.com/onnx/models
+                </a>
+              </p>
+            </div>
             <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
               <p className="font-medium text-slate-700 dark:text-slate-300">
                 Convert Hugging Face models to ONNX{" "}
