@@ -4,7 +4,7 @@
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   
   <Package Name="InfiniteGpu"
-           Version="1.0.12.0"
+           Version="1.0.13.0"
            Manufacturer="Scalerize"
            UpgradeCode="12345678-1234-1234-1234-123456789012"
            Language="1033"
