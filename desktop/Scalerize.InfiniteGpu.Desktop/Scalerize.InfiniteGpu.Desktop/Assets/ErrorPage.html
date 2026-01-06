@@ -292,7 +292,8 @@
             // Use WebView bridge to notify desktop to retry connection
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({
-                    type: 'error:retry'
+                    type: 'event',
+                    name: 'error:retry'
                 });
             }
         }
@@ -301,7 +302,8 @@
             // Use WebView bridge to notify desktop to close application
             if (window.chrome && window.chrome.webview) {
                 window.chrome.webview.postMessage({
-                    type: 'error:close'
+                    type: 'event',
+                    name: 'error:close'
                 });
             }
         }

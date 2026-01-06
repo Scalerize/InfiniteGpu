@@ -169,7 +169,7 @@ namespace Scalerize.InfiniteGpu.Desktop
             SetLoadingState(false);
             await NotifyFrontendRuntimeStateAsync();
 
-            ConfigureDevelopmentAccelerators();
+            ConfigureKeyboardAccelerators();
             InitializeWebView();
 
             ConfigureTrayMenu();
@@ -302,6 +302,10 @@ namespace Scalerize.InfiniteGpu.Desktop
             {
                 AppWebView.Source = Constants.Constants.FrontendUri;
             }
+            else
+            {
+                AppWebView.Reload();
+            }
         }
 
         private void OnNavigationStarting(WebView2 sender, CoreWebView2NavigationStartingEventArgs args)
@@ -324,7 +328,7 @@ namespace Scalerize.InfiniteGpu.Desktop
 
         private void OnCoreNavigationCompleted(CoreWebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
         {
-            if (!args.IsSuccess)
+            if (!args.IsSuccess && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
             {
                 Debug.WriteLine($"Navigation failed with error: {args.WebErrorStatus}");
                 ShowErrorPage();
@@ -617,8 +621,15 @@ namespace Scalerize.InfiniteGpu.Desktop
             }
         }
 
-        private void ConfigureDevelopmentAccelerators()
+        private void ConfigureKeyboardAccelerators()
         {
+            var f5Accelerator = new KeyboardAccelerator
+            {
+                Key = VirtualKey.F5
+            };
+            f5Accelerator.Invoked += OnReloadAcceleratorInvoked;
+            AppWebView.KeyboardAccelerators.Add(f5Accelerator);
+
             if (!_isDevelopment)
             {
                 return;
@@ -638,6 +649,12 @@ namespace Scalerize.InfiniteGpu.Desktop
             };
             inspectAccelerator.Invoked += OnDevToolsAcceleratorInvoked;
             AppWebView.KeyboardAccelerators.Add(inspectAccelerator);
+        }
+
+        private void OnReloadAcceleratorInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+        {
+            args.Handled = true;
+            NavigateToFrontend();
         }
 
         private void OnDevToolsAcceleratorInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
