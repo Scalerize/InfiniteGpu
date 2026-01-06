@@ -746,6 +746,23 @@ export const NewTaskRequestDialog = ({
                 https://github.com/onnx/models
               </a>
             </p>
+            <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+              <p className="font-medium text-slate-700 dark:text-slate-300">
+                Convert Hugging Face models to ONNX{" "}
+                <a
+                  href="https://huggingface.co/docs/optimum-onnx/installation"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  using optimus
+                </a>
+                :
+              </p>
+              <code className="mt-1 block select-all rounded bg-slate-200 px-2 py-1 font-mono text-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                optimum-cli export onnx --model meta-llama/Llama-3.2-1B --output_dir meta_llama3_2_1b_onnx
+              </code>
+            </div>
           </div>
         </section>
         )}
