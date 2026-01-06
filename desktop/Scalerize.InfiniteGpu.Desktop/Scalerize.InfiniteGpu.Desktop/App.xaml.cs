@@ -72,6 +72,26 @@ namespace Scalerize.InfiniteGpu.Desktop
             _window = _serviceProvider.GetRequiredService<MainWindow>();
             _window.Closed += OnWindowClosed;
             _window.Activate();
+
+            try
+            {
+                var activatedEventArgs = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
+                if (activatedEventArgs.Kind == Microsoft.Windows.AppLifecycle.ExtendedActivationKind.Protocol)
+                {
+                    var protocolArgs = (Windows.ApplicationModel.Activation.ProtocolActivatedEventArgs)activatedEventArgs.Data;
+                    if (protocolArgs.Uri.Scheme == "infinitegpu")
+                    {
+                        if (_window is MainWindow mainWindow)
+                        {
+                            mainWindow.NavigateTo(protocolArgs.Uri);
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Ignore activation errors
+            }
         }
 
         /// <summary>

@@ -60,6 +60,11 @@
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="ProductIcon" />
       </Component>
+
+      <Component Id="ProtocolHandler" Guid="12345678-1234-1234-1234-123456789015">
+        <RegistryValue Root="HKCR" Key="infinitegpu" Name="URL Protocol" Value="" Type="string" KeyPath="yes" />
+        <RegistryValue Root="HKCR" Key="infinitegpu\shell\open\command" Value="&quot;[#MainExe]&quot; &quot;%1&quot;" Type="string" />
+      </Component>
     </ComponentGroup>
 
     <ComponentGroup Id="AssetsComponent" Directory="AssetsFolder">

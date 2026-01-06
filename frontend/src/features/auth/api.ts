@@ -42,3 +42,29 @@ export const register = async (payload: RegisterRequest): Promise<string> => {
 
   return ensureToken('register', response);
 };
+
+export interface ForgotPasswordRequest {
+  email: string;
+}
+
+export const forgotPassword = async (payload: ForgotPasswordRequest): Promise<void> => {
+  await apiRequest<void, ForgotPasswordRequest>('/api/auth/forgot-password', {
+    method: 'POST',
+    body: payload,
+    authenticated: false
+  });
+};
+
+export interface ResetPasswordRequest {
+  email: string;
+  token: string;
+  newPassword: string;
+}
+
+export const resetPassword = async (payload: ResetPasswordRequest): Promise<void> => {
+  await apiRequest<void, ResetPasswordRequest>('/api/auth/reset-password', {
+    method: 'POST',
+    body: payload,
+    authenticated: false
+  });
+};

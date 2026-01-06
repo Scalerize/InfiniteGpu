@@ -676,6 +676,29 @@ namespace Scalerize.InfiniteGpu.Desktop
             });
         }
 
+        public void NavigateTo(Uri uri)
+        {
+            if (uri.Scheme != "infinitegpu")
+            {
+                return;
+            }
+
+            if (uri.Host == "reset-password")
+            {
+                var query = uri.Query;
+                var frontendUri = new UriBuilder(Constants.Constants.FrontendUri);
+                frontendUri.Path = "reset-password";
+                frontendUri.Query = query;
+
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    AppWebView.Source = frontendUri.Uri;
+                    _appWindow?.Show();
+                    Activate();
+                });
+            }
+        }
+
         public Task PrepareForShutdownAsync()
         {
             if (_shutdownCompletionSource is not null)

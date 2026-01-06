@@ -7,6 +7,8 @@ import {
 } from 'react-router-dom';
 import { LoginPage } from './features/auth/components/LoginPage';
 import { RegisterPage } from './features/auth/components/RegisterPage';
+import { ForgotPasswordPage } from './features/auth/components/ForgotPasswordPage';
+import { ResetPasswordPage } from './features/auth/components/ResetPasswordPage';
 import { ProtectedAppShell } from './shared/layout/ProtectedAppShell';
 import { DashboardPage } from './pages/DashboardPage';
 import { TasksPage } from './pages/TasksPage';
@@ -48,6 +50,9 @@ function App() {
       <Routes>
         <Route path="/auth/login" element={<LoginPage />} />
         <Route path="/auth/register" element={<RegisterPage />} />
+        <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route element={<ProtectedAppShell />}>
           <Route index element={<DashboardPage />} />
           <Route path="tasks" element={<TasksPage />} />
