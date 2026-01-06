@@ -1,4 +1,4 @@
-import { getAuthToken } from '../../features/auth/stores/authStore';
+import { getAuthToken, useAuthStore } from '../../features/auth/stores/authStore';
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -59,6 +59,13 @@ export async function apiRequest<TResponse, TBody = unknown>(
   });
 
   if (!response.ok) {
+    if (response.status === 401) {
+      useAuthStore.getState().clearAuth();
+      if (!window.location.pathname.includes('/auth/login')) {
+        window.location.href = '/auth/login';
+      }
+    }
+
     let errorMessage = 'An unexpected error occurred';
     
     try {
