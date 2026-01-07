@@ -10,6 +10,7 @@ import {
   UserRoundPen,
   Palette,
   Check,
+  MessageSquare,
 } from "lucide-react";
 import scalerize from "../../assets/logo-blue.png";
 import { useThemeStore, type ThemeMode } from "../stores/themeStore";
@@ -126,8 +127,7 @@ export const AppNavigation = ({
                 Profile
               </DropdownMenu.Label>
               <DropdownMenu.Item
-                onSelect={(event) => {
-                  event.preventDefault();
+                onSelect={() => {
                   onRequestProfileUpdate();
                 }}
                 className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 outline-none transition hover:bg-indigo-50 hover:text-indigo-600 data-[highlighted]:bg-indigo-50 data-[highlighted]:text-indigo-600 dark:hover:bg-indigo-950/50 dark:data-[highlighted]:bg-indigo-950/50"
@@ -157,8 +157,7 @@ export const AppNavigation = ({
                     {themeOptions.map((option) => (
                       <DropdownMenu.Item
                         key={option.value}
-                        onSelect={(event) => {
-                          event.preventDefault();
+                        onSelect={() => {
                           setMode(option.value);
                         }}
                         className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 outline-none transition hover:bg-indigo-50 hover:text-indigo-600 data-[highlighted]:bg-indigo-50 data-[highlighted]:text-indigo-600 dark:hover:bg-indigo-950/50 dark:data-[highlighted]:bg-indigo-950/50"
@@ -174,9 +173,19 @@ export const AppNavigation = ({
               </DropdownMenu.Sub>
               
               <DropdownMenu.Separator className="my-1 h-px bg-slate-100 dark:bg-slate-700" />
+              
               <DropdownMenu.Item
-                onSelect={(event) => {
-                  event.preventDefault();
+                onSelect={() => {
+                  window.open("https://github.com/Scalerize/InfiniteGpu/issues", "_blank");
+                }}
+                className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 outline-none transition hover:bg-indigo-50 hover:text-indigo-600 data-[highlighted]:bg-indigo-50 data-[highlighted]:text-indigo-600 dark:hover:bg-indigo-950/50 dark:data-[highlighted]:bg-indigo-950/50"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Send feedback
+              </DropdownMenu.Item>
+
+              <DropdownMenu.Item
+                onSelect={() => {
                   onSignOut();
                 }}
                 className="flex cursor-pointer items-center gap-2 rounded-lg px-3 py-2 font-semibold text-rose-600 outline-none transition hover:bg-rose-50 data-[highlighted]:bg-rose-50 dark:hover:bg-rose-950/30 dark:data-[highlighted]:bg-rose-950/30"
