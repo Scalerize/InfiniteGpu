@@ -144,31 +144,27 @@ export const PaymentsEarningsPanel = () => {
                   <div className="flex min-w-0 flex-1 flex-col">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{entry.label}</span>
-                      <span className="text-xs text-slate-400 dark:text-slate-500">
-                        {formatUtcToLocal(entry.createdAt, {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          day: '2-digit',
-                          month: 'short'
-                        })}
-                      </span>
                     </div>
                     <p className="text-sm text-slate-500 dark:text-slate-400">{entry.detail}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
-                      <span className="rounded-full border border-slate-200 px-3 py-1 dark:border-slate-700">
-                        Balance after: <span className="font-medium text-slate-700 dark:text-slate-300">€{entry.balanceAfter.toFixed(2)}</span>
-                      </span>
                       <span className="rounded-full border border-slate-200 px-3 py-1 dark:border-slate-700">Entry ID: {entry.id}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-col items-end">
+                  <div className="flex flex-col items-end gap-0.5">
                     <span
                       className={`text-sm font-semibold ${isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
                     >
                       {isCredit ? '+' : '-'}€{entry.amount.toFixed(2)}
                     </span>
-                    <span className="text-xs text-slate-400 dark:text-slate-500">Auto-matched</span>
+                    <span className="text-xs text-slate-400 dark:text-slate-500">
+                      {formatUtcToLocal(entry.createdAt, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        day: '2-digit',
+                        month: 'short'
+                      })}
+                    </span>
                   </div>
                 </li>
               );
@@ -192,7 +188,7 @@ export const PaymentsEarningsPanel = () => {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
                       <CalendarDays className="h-4 w-4 text-indigo-500 dark:text-indigo-400" />
-                      {financeSummary.nextPayout.reference}
+                        {financeSummary.nextPayout.reference}
                     </div>
                     <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Next Payout</div>
                   </div>
@@ -226,7 +222,7 @@ export const PaymentsEarningsPanel = () => {
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
                       <CalendarDays className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
-                      {financeSummary.previousPayout.reference}
+                        {financeSummary.previousPayout.reference}
                     </div>
                     <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Previous Payout</div>
                   </div>
