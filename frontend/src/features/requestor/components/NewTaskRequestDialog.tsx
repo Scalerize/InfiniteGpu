@@ -761,7 +761,7 @@ export const NewTaskRequestDialog = ({
                 </a>
                 :
               </p>
-              <code className="mt-1 block select-all rounded bg-slate-200 px-2 py-1 font-mono text-slate-800 dark:bg-slate-900 dark:text-slate-300">
+              <code className="mt-1 block select-all rounded bg-white px-2 py-1 font-mono text-slate-800 dark:bg-slate-900 dark:text-slate-300">
                 optimum-cli export onnx --model meta-llama/Llama-3.2-1B --output_dir meta_llama3_2_1b_onnx
               </code>
             </div>
