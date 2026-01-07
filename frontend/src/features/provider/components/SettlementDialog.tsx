@@ -5,7 +5,7 @@ import { DialogShell } from "../../../shared/components/DialogShell";
 interface SettlementDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onSettle: (amount: number, country: string, bankAccountDetails: string) => Promise<void>;
+  onSettle: (amount: number, country: string, bankAccountDetails: string, accountToken?: string) => Promise<void>;
   availableBalance: number;
 }
 

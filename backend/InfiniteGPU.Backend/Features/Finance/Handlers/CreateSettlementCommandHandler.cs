@@ -109,76 +109,11 @@ public sealed class CreateSettlementCommandHandler : IRequestHandler<CreateSettl
                 var isEuCountry = IsEuropeanUnionCountry(request.Country);
                 var isUsCountry = request.Country.Equals("US", StringComparison.OrdinalIgnoreCase);
 
-                var accountService = new AccountService();
-                string connectedAccountId;
-
-                // Check if user has a connected account
-                if (string.IsNullOrEmpty(user.StripeConnectedAccountId))
-                {
-                    _logger.LogInformation("Creating Stripe Connect account for user {UserId} in country {Country}", request.UserId, request.Country);
-                    
-                    var accountOptions = new AccountCreateOptions
-                    {
-                        Type = "express", // Express accounts are easier to onboard
-                        Email = user.Email,
-                        Country = request.Country.ToUpperInvariant(),
-                        Capabilities = new AccountCapabilitiesOptions
-                        {
-                            Transfers = new AccountCapabilitiesTransfersOptions { Requested = true }
-                        },
-                        BusinessType = "individual",
-                        BusinessProfile = new AccountBusinessProfileOptions
-                        {
-                            Url = "https://infinite-gpu.scalerize.fr"
-                        }
-                    };
-
-                    // Add country-specific capabilities
-                    if (isUsCountry)
-                    {
-                        accountOptions.Capabilities.UsBankAccountAchPayments = new AccountCapabilitiesUsBankAccountAchPaymentsOptions { Requested = true };
-                    }
-                    else if (isEuCountry)
-                    {
-                        accountOptions.Capabilities.SepaDebitPayments = new AccountCapabilitiesSepaDebitPaymentsOptions { Requested = true };
-                    }
-
-                    Account account;
-                    try
-                    {
-                        account = await accountService.CreateAsync(accountOptions, cancellationToken: cancellationToken);
-                        connectedAccountId = account.Id;
-                        user.StripeConnectedAccountId = connectedAccountId;
-                        user.Country = request.Country; // Store country for future settlements
-                        await _context.SaveChangesAsync(cancellationToken);
-                        
-                        _logger.LogInformation(
-                            "Created Stripe Connect account {AccountId} for user {UserId} in country {Country}",
-                            account.Id, request.UserId, request.Country);
-                    }
-                    catch (StripeException stripeEx)
-                    {
-                        _logger.LogError(stripeEx, "Failed to create Stripe Connect account for user {UserId} in country {Country}", request.UserId, request.Country);
-                        
-                        settlement.Status = SettlementStatus.Failed;
-                        settlement.FailureReason = $"Failed to create payment account: {stripeEx.Message}";
-                        settlement.UpdatedAtUtc = DateTime.UtcNow;
-                        await _context.SaveChangesAsync(cancellationToken);
-                        
-                        return new CreateSettlementResult(false, null, $"Failed to create payment account: {stripeEx.Message}");
-                    }
-                }
-                else
-                {
-                    connectedAccountId = user.StripeConnectedAccountId;
-                }
-
-                // Create bank account token
-                _logger.LogInformation(
-                    "Creating bank account token for connected account {AccountId}",
-                    connectedAccountId);
+                // Create bank account token FIRST
+                _logger.LogInformation("Creating bank account token for user {UserId}", request.UserId);
 
                 string bankAccountToken;
+                string accountTokenId;
                 try
                 {
                     var tokenService = new TokenService();
@@ -226,65 +161,220 @@ public sealed class CreateSettlementCommandHandler : IRequestHandler<CreateSettl
                     var token = await tokenService.CreateAsync(tokenOptions, cancellationToken: cancellationToken);
                     bankAccountToken = token.Id;
                     
-                    _logger.LogInformation(
-                        "Created bank account token for connected account {AccountId}",
-                        connectedAccountId);
+                    _logger.LogInformation("Created bank account token {TokenId}", bankAccountToken);
+
+                    // Create Account Token (required for FR platforms)
+                    var accountTokenOptions = new TokenCreateOptions
+                    {
+                        Account = new TokenAccountOptions
+                        {
+                            BusinessType = "individual",
+                            TosShownAndAccepted = true
+                        }
+                    };
+                    var accountToken = await tokenService.CreateAsync(accountTokenOptions, cancellationToken: cancellationToken);
+                    accountTokenId = accountToken.Id;
+                    _logger.LogInformation("Created account token {TokenId}", accountTokenId);
                 }
                 catch (StripeException stripeEx)
                 {
-                    _logger.LogError(stripeEx, "Failed to create bank account token for connected account {AccountId}", connectedAccountId);
+                    _logger.LogError(stripeEx, "Failed to create tokens");
                     
                     settlement.Status = SettlementStatus.Failed;
-                    settlement.FailureReason = $"Failed to create bank account token: {stripeEx.Message}";
+                    settlement.FailureReason = $"Failed to create payment tokens: {stripeEx.Message}";
                     settlement.UpdatedAtUtc = DateTime.UtcNow;
                     await _context.SaveChangesAsync(cancellationToken);
                     
-                    return new CreateSettlementResult(false, null, $"Failed to create bank account token: {stripeEx.Message}");
+                    return new CreateSettlementResult(false, null, $"Failed to create payment tokens: {stripeEx.Message}");
                 }
 
-                // Add bank account to connected account
-                _logger.LogInformation(
-                    "Adding external bank account to connected account {AccountId}",
-                    connectedAccountId);
-
+                var accountService = new AccountService();
+                string connectedAccountId;
                 string externalAccountId;
-                try
+
+                // Check if user has a connected account
+                if (string.IsNullOrEmpty(user.StripeConnectedAccountId))
                 {
-                    // Update the connected account with the external account
-                    var accountUpdateOptions = new AccountUpdateOptions
+                    _logger.LogInformation("Creating Stripe Connect account for user {UserId} in country {Country}", request.UserId, request.Country);
+                    
+                    var accountOptions = new AccountCreateOptions
                     {
-                        ExternalAccount = bankAccountToken
+                        Type = "custom", // Always Custom as requested
+                        Email = user.Email,
+                        Country = request.Country.ToUpperInvariant(),
+                        Capabilities = new AccountCapabilitiesOptions
+                        {
+                            Transfers = new AccountCapabilitiesTransfersOptions { Requested = true },
+                            CardPayments = new AccountCapabilitiesCardPaymentsOptions { Requested = true }
+                        },
+                        BusinessType = "individual",
+                        BusinessProfile = new AccountBusinessProfileOptions
+                        {
+                            Url = "https://infinite-gpu.scalerize.fr"
+                        },
+                        TosAcceptance = new AccountTosAcceptanceOptions
+                        {
+                            Date = DateTime.UtcNow,
+                            Ip = request.IpAddress ?? "127.0.0.1"
+                        },
+                        ExternalAccount = bankAccountToken,
+                        AccountToken = accountTokenId
                     };
 
-                    var updatedAccount = await accountService.UpdateAsync(
-                        connectedAccountId,
-                        accountUpdateOptions,
-                        cancellationToken: cancellationToken);
-                    
-                    // Get the ID of the newly added external account
-                    if (updatedAccount.ExternalAccounts?.Data != null && updatedAccount.ExternalAccounts.Data.Any())
+                    // Add country-specific capabilities
+                    if (isUsCountry)
                     {
-                        externalAccountId = updatedAccount.ExternalAccounts.Data.Last().Id;
+                        accountOptions.Capabilities.UsBankAccountAchPayments = new AccountCapabilitiesUsBankAccountAchPaymentsOptions { Requested = true };
                     }
-                    else
+                    else if (isEuCountry)
                     {
-                        throw new InvalidOperationException("No external account was added to the connected account");
+                        accountOptions.Capabilities.SepaDebitPayments = new AccountCapabilitiesSepaDebitPaymentsOptions { Requested = true };
                     }
-                    
-                    _logger.LogInformation(
-                        "Added external bank account {BankAccountId} to connected account {AccountId}",
-                        externalAccountId, connectedAccountId);
+
+                    Account account;
+                    try
+                    {
+                        account = await accountService.CreateAsync(accountOptions, cancellationToken: cancellationToken);
+                        connectedAccountId = account.Id;
+                        user.StripeConnectedAccountId = connectedAccountId;
+                        user.Country = request.Country; // Store country for future settlements
+                        await _context.SaveChangesAsync(cancellationToken);
+                        
+                        // Get the external account ID from the created account
+                        if (account.ExternalAccounts?.Data != null && account.ExternalAccounts.Data.Any())
+                        {
+                            externalAccountId = account.ExternalAccounts.Data.First().Id;
+                        }
+                        else
+                        {
+                             // Fallback if for some reason it wasn't added (shouldn't happen if token is valid)
+                             throw new StripeException("External account was not added during creation.");
+                        }
+                        
+                        _logger.LogInformation(
+                            "Created Stripe Connect account {AccountId} for user {UserId} in country {Country}",
+                            account.Id, request.UserId, request.Country);
+                    }
+                    catch (StripeException stripeEx)
+                    {
+                        _logger.LogError(stripeEx, "Failed to create Stripe Connect account for user {UserId} in country {Country}", request.UserId, request.Country);
+                        
+                        settlement.Status = SettlementStatus.Failed;
+                        settlement.FailureReason = $"Failed to create payment account: {stripeEx.Message}";
+                        settlement.UpdatedAtUtc = DateTime.UtcNow;
+                        await _context.SaveChangesAsync(cancellationToken);
+                        
+                        return new CreateSettlementResult(false, null, $"Failed to create payment account: {stripeEx.Message}");
+                    }
                 }
-                catch (StripeException stripeEx)
+                else
                 {
-                    _logger.LogError(stripeEx, "Failed to add external bank account to connected account {AccountId}", connectedAccountId);
-                    
-                    settlement.Status = SettlementStatus.Failed;
-                    settlement.FailureReason = $"Failed to add bank account: {stripeEx.Message}";
-                    settlement.UpdatedAtUtc = DateTime.UtcNow;
-                    await _context.SaveChangesAsync(cancellationToken);
-                    
-                    return new CreateSettlementResult(false, null, $"Failed to add bank account: {stripeEx.Message}");
+                    connectedAccountId = user.StripeConnectedAccountId;
+
+                    // Retrieve account to check capabilities and ensure they are enabled
+                    try 
+                    {
+                        var account = await accountService.GetAsync(connectedAccountId, cancellationToken: cancellationToken);
+                        
+                        var updateOptions = new AccountUpdateOptions
+                        {
+                            Capabilities = new AccountCapabilitiesOptions()
+                        };
+                        bool needsUpdate = false;
+
+                        // Check Transfers capability
+                        if (account.Capabilities?.Transfers != "active" && account.Capabilities?.Transfers != "pending")
+                        {
+                            updateOptions.Capabilities.Transfers = new AccountCapabilitiesTransfersOptions { Requested = true };
+                            needsUpdate = true;
+                        }
+
+                        // Check CardPayments capability
+                        if (account.Capabilities?.CardPayments != "active" && account.Capabilities?.CardPayments != "pending")
+                        {
+                            updateOptions.Capabilities.CardPayments = new AccountCapabilitiesCardPaymentsOptions { Requested = true };
+                            needsUpdate = true;
+                        }
+
+                        // Check country-specific capabilities
+                        if (isUsCountry && account.Capabilities?.UsBankAccountAchPayments != "active" && account.Capabilities?.UsBankAccountAchPayments != "pending")
+                        {
+                            updateOptions.Capabilities.UsBankAccountAchPayments = new AccountCapabilitiesUsBankAccountAchPaymentsOptions { Requested = true };
+                            needsUpdate = true;
+                        }
+                        else if (isEuCountry && account.Capabilities?.SepaDebitPayments != "active" && account.Capabilities?.SepaDebitPayments != "pending")
+                        {
+                            updateOptions.Capabilities.SepaDebitPayments = new AccountCapabilitiesSepaDebitPaymentsOptions { Requested = true };
+                            needsUpdate = true;
+                        }
+
+                        // Ensure TOS acceptance is recorded if missing (required for Custom accounts)
+                        // Only allowed for Custom accounts where the platform handles onboarding
+                        if (account.Type == "custom" && account.TosAcceptance?.Date == null)
+                        {
+                            updateOptions.TosAcceptance = new AccountTosAcceptanceOptions
+                            {
+                                Date = DateTime.UtcNow,
+                                Ip = request.IpAddress ?? "127.0.0.1"
+                            };
+                            needsUpdate = true;
+                        }
+
+                        if (needsUpdate)
+                        {
+                            _logger.LogInformation("Updating capabilities/TOS for existing account {AccountId}", connectedAccountId);
+                            await accountService.UpdateAsync(connectedAccountId, updateOptions, cancellationToken: cancellationToken);
+                        }
+                    }
+                    catch (StripeException stripeEx)
+                    {
+                        _logger.LogError(stripeEx, "Failed to update existing Stripe account {AccountId}", connectedAccountId);
+                        // Continue, as it might work or fail later with a specific error
+                    }
+
+                    // Add bank account to connected account
+                    _logger.LogInformation(
+                        "Adding external bank account to connected account {AccountId}",
+                        connectedAccountId);
+
+                    try
+                    {
+                        // Update the connected account with the external account
+                        var accountUpdateOptions = new AccountUpdateOptions
+                        {
+                            ExternalAccount = bankAccountToken
+                        };
+
+                        var updatedAccount = await accountService.UpdateAsync(
+                            connectedAccountId,
+                            accountUpdateOptions,
+                            cancellationToken: cancellationToken);
+                        
+                        // Get the ID of the newly added external account
+                        if (updatedAccount.ExternalAccounts?.Data != null && updatedAccount.ExternalAccounts.Data.Any())
+                        {
+                            externalAccountId = updatedAccount.ExternalAccounts.Data.Last().Id;
+                        }
+                        else
+                        {
+                            throw new InvalidOperationException("No external account was added to the connected account");
+                        }
+                        
+                        _logger.LogInformation(
+                            "Added external bank account {BankAccountId} to connected account {AccountId}",
+                            externalAccountId, connectedAccountId);
+                    }
+                    catch (StripeException stripeEx)
+                    {
+                        _logger.LogError(stripeEx, "Failed to add external bank account to connected account {AccountId}", connectedAccountId);
+                        
+                        settlement.Status = SettlementStatus.Failed;
+                        settlement.FailureReason = $"Failed to add bank account: {stripeEx.Message}";
+                        settlement.UpdatedAtUtc = DateTime.UtcNow;
+                        await _context.SaveChangesAsync(cancellationToken);
+                        
+                        return new CreateSettlementResult(false, null, $"Failed to add bank account: {stripeEx.Message}");
+                    }
                 }
 
                 // Create transfer to connected account (not payout, as the account needs balance first)
@@ -320,14 +410,20 @@ public sealed class CreateSettlementCommandHandler : IRequestHandler<CreateSettl
                 {
                     _logger.LogError(stripeEx, "Stripe transfer failed for settlement {SettlementId}", settlement.Id);
                     
+                    string failureReason = stripeEx.Message;
+                    if (stripeEx.StripeError?.Code == "account_missing_capabilities" || stripeEx.Message.Contains("capabilities enabled"))
+                    {
+                        failureReason = "Stripe account requires onboarding. Please complete the verification process sent to your email.";
+                    }
+
                     // Mark settlement as failed (no balance was deducted yet)
                     settlement.Status = SettlementStatus.Failed;
-                    settlement.FailureReason = stripeEx.Message;
+                    settlement.FailureReason = failureReason;
                     settlement.UpdatedAtUtc = DateTime.UtcNow;
                     
                     await _context.SaveChangesAsync(cancellationToken);
                     
-                    return new CreateSettlementResult(false, null, $"Transfer failed: {stripeEx.Message}");
+                    return new CreateSettlementResult(false, null, $"Transfer failed: {failureReason}");
                 }
 
                 // Now create payout from connected account to bank

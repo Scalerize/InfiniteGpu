@@ -68,6 +68,7 @@ public static class FinanceEndpoints
     }
 
     private static async Task<IResult> CreateSettlementAsync(
+        HttpContext httpContext,
         ClaimsPrincipal principal,
         SettlementRequest request,
         IMediator mediator,
@@ -79,7 +80,8 @@ public static class FinanceEndpoints
             return Results.Unauthorized();
         }
 
-        var command = new CreateSettlementCommand(userId, request.Amount, request.Country, request.BankAccountDetails);
+        var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+        var command = new CreateSettlementCommand(userId, request.Amount, request.Country, request.BankAccountDetails, ipAddress);
         var result = await mediator.Send(command, cancellationToken);
 
         if (!result.Success)

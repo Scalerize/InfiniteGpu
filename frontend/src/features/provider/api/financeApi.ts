@@ -46,9 +46,9 @@ export const processTopUp = async (amount: number, stripePaymentMethodId: string
   });
 };
 
-export const createSettlement = async (amount: number, country: string, bankAccountDetails: string): Promise<{ settlementId: string }> => {
+export const createSettlement = async (amount: number, country: string, bankAccountDetails: string, accountToken?: string): Promise<{ settlementId: string }> => {
   return apiRequest<{ settlementId: string }>('/api/finance/settlement', {
     method: 'POST',
-    body: { amount, country, bankAccountDetails }
+    body: { amount, country, bankAccountDetails, accountToken }
   });
 };
