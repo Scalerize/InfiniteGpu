@@ -142,9 +142,6 @@ export const NewTaskRequestDialog = ({
   const checkpointFileFieldId = useId();
   const evalFileFieldId = useId();
   const inferenceSectionId = useId();
-  const hyperparameterEpochsId = useId();
-  const hyperparameterBatchSizeId = useId();
-  const hyperparameterLearningRateId = useId();
   const trainingDatasetFileFieldId = useId();
   const validationDatasetFileFieldId = useId();
   const trainingDatasetFormatFieldId = useId();
@@ -186,15 +183,6 @@ export const NewTaskRequestDialog = ({
     useState<DatasetConfig>(createDatasetConfig);
   const [validationDataset, setValidationDataset] =
     useState<DatasetConfig>(createDatasetConfig);
-  const [trainHyperparameters, setTrainHyperparameters] = useState<{
-    epochs: number;
-    batchSize: number;
-    learningRate: string;
-  }>({
-    epochs: 3,
-    batchSize: 32,
-    learningRate: "",
-  });
   const [onnxFile, setOnnxFile] = useState<File | null>(null);
   const [onnxFileName, setOnnxFileName] = useState<string | null>(null);
   const [optimizerFile, setOptimizerFile] = useState<File | null>(null);
@@ -2033,12 +2021,7 @@ artifacts.generate_artifacts(model,
             format: validationDataset.format,
           })}
         />
-        <input
-          type="hidden"
-          name="trainHyperparametersMeta"
-          value={JSON.stringify(trainHyperparameters)}
-        />
-
+        
         {submissionError ? (
           <div className="rounded-lg border border-rose-300 bg-rose-50/70 px-4 py-3 text-sm text-rose-700 shadow-sm dark:border-rose-900/50 dark:bg-rose-950/50 dark:text-rose-400">
             {submissionError}
