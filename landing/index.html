@@ -93,19 +93,18 @@
     </header>
 
     <section class="px-6 pb-24 sm:px-12 lg:px-20">
-      <div class="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
+      <div class="mx-auto grid max-w-6xl gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] items-center">
         <div class="flex flex-col justify-center gap-8">
           <p
             class="inline-flex w-fit items-center rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold uppercase tracking-[0.4em] text-brand-100 shadow-card">
             Cloud Computing Marketplace
           </p>
           <h1 class="text-4xl font-semibold leading-tight text-white sm:text-5xl lg:text-[3.4rem]">
-            Unlimited AI compute at your <span class="text-brand-200">fingertips</span>.
+            Train & run AI models at <span class="text-brand-200">infinite scale</span>.
           </h1>
           <p class="max-w-xl text-lg text-slate-300">
-            Access a global network of computing providers with transparent pricing,
-            support for any input/output format, and unlimited scalability.
-            Run your AI inference workloads on GPU, NPU, or CPU—all through one platform.
+            Access a global network of computing providers for AI training and inference.
+            Train your models, run inference workloads, and scale instantly on GPU, NPU, or CPU—all through one platform.
           </p>
           <div class="flex flex-col gap-4 sm:flex-row">
             <a href="#download"
@@ -128,10 +127,10 @@
             </div>
             <div class="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-6 shadow-card">
               <dt class="text-xs font-semibold uppercase tracking-wide text-brand-100">
-                Universal Formats
+                Training & Inference
               </dt>
-              <dd class="mt-3 text-2xl font-semibold text-white">All Types</dd>
-              <p class="mt-1 text-xs text-slate-300">Tensors, images, videos, text</p>
+              <dd class="mt-3 text-2xl font-semibold text-white">Full Stack</dd>
+              <p class="mt-1 text-xs text-slate-300">Train models & run inference</p>
             </div>
             <div class="rounded-2xl border border-white/10 bg-gradient-to-b from-white/10 to-white/5 p-6 shadow-card">
               <dt class="text-xs font-semibold uppercase tracking-wide text-brand-100">
@@ -142,13 +141,87 @@
             </div>
           </dl>
         </div>
+        
+        <!-- Right side visual -->
+        <div class="hidden lg:flex flex-col gap-6 ml-6">
+          <!-- Training visualization card -->
+          <div class="rounded-3xl border border-white/10 bg-gradient-to-br from-purple-900/40 via-slate-900 to-slate-950 p-6 shadow-card">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/20">
+                <svg class="h-5 w-5 text-purple-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-sm font-semibold text-white">Network Training</p>
+                <p class="text-xs text-purple-200">Models currently training</p>
+              </div>
+              <div class="ml-auto flex h-3 w-3 items-center justify-center">
+                <span class="absolute h-3 w-3 animate-ping rounded-full bg-purple-400 opacity-75"></span>
+                <span class="relative h-2 w-2 rounded-full bg-purple-500"></span>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 gap-4">
+              <div class="rounded-xl bg-slate-800/50 p-3 text-center">
+                <p id="training-count" class="text-2xl font-semibold text-white">12</p>
+                <p class="text-xs text-slate-400">Active models trainings</p>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Inference visualization card -->
+          <div class="rounded-3xl border border-white/10 bg-gradient-to-br from-cyan-900/40 via-slate-900 to-slate-950 p-6 shadow-card">
+            <div class="flex items-center gap-3 mb-4">
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/20">
+                <svg class="h-5 w-5 text-cyan-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-sm font-semibold text-white">Network Inference</p>
+                <p class="text-xs text-cyan-200">Active inference tasks</p>
+              </div>
+              <div class="ml-auto flex h-3 w-3 items-center justify-center">
+                <span class="absolute h-3 w-3 animate-ping rounded-full bg-cyan-400 opacity-75"></span>
+                <span class="relative h-2 w-2 rounded-full bg-cyan-500"></span>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 gap-4">
+              <div class="rounded-xl bg-slate-800/50 p-3 text-center">
+                <p id="inference-count" class="text-2xl font-semibold text-white">83</p>
+                <p class="text-xs text-slate-400">Active inferences tasks</p>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Provider stats mini card -->
+          <div class="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-card">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-3">
+                <div class="flex -space-x-2">
+                  <div class="h-8 w-8 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 border-2 border-slate-900"></div>
+                  <div class="h-8 w-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 border-2 border-slate-900"></div>
+                  <div class="h-8 w-8 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 border-2 border-slate-900"></div>
+                </div>
+                <div>
+                  <p id="providers-count" class="text-sm font-medium text-white">50+ Active Providers</p>
+                  <p class="text-xs text-slate-400">Ready to process your workloads</p>
+                </div>
+              </div>
+              <div class="flex h-3 w-3 items-center justify-center">
+                <span class="absolute h-3 w-3 animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative h-2 w-2 rounded-full bg-emerald-500"></span>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
 
   <main class="space-y-36">
     <section id="advantages" class="px-6 sm:px-12 lg:px-20">
-      <div class="mx-auto max-w-6xl text-center">
+      <div class="mx-auto mt-12 max-w-6xl text-center">
         <p class="text-xs font-semibold uppercase tracking-[0.35em] text-brand-100">
           Why Choose InfiniteGPU
         </p>
@@ -233,7 +306,7 @@
             </li>
             <li class="flex items-center gap-3">
               <span class="h-2 w-2 rounded-full bg-cyan-300"></span>
-              NPU optimization for AI inference
+              NPU optimization for AI inference and training
             </li>
             <li class="flex items-center gap-3">
               <span class="h-2 w-2 rounded-full bg-cyan-300"></span>
@@ -284,7 +357,7 @@
           experience.
         </p>
       </div>
-      <div class="mx-auto mt-12 grid max-w-6xl gap-6 lg:grid-cols-3">
+      <div class="mx-auto mt-12 grid max-w-6xl gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <article class="rounded-3xl border border-white/10 bg-white/5 p-8 text-left shadow-card">
           <p class="text-xs uppercase tracking-[0.35em] text-slate-400">
             Inference Workloads
@@ -319,6 +392,17 @@
           <p class="mt-3 text-sm text-slate-300">
             Comprehensive audit logs help you meet compliance requirements and maintain full visibility into your
             compute operations.
+          </p>
+        </article>
+        <article class="rounded-3xl border border-white/10 bg-white/5 p-8 text-left shadow-card">
+          <p class="text-xs uppercase tracking-[0.35em] text-slate-400">
+            Training Workloads
+          </p>
+          <h3 class="mt-4 text-xl font-semibold text-white">
+            Distributed model training
+          </h3>
+          <p class="mt-3 text-sm text-slate-300">
+            Train your AI models across distributed GPU & NPU clusters with automatic checkpointing, fault tolerance, and seamless scaling.
           </p>
         </article>
       </div>
@@ -392,9 +476,14 @@
       </div>
     </section>
 
-    <section id="download" class="px-6 sm:px-12 lg:px-20">
-      <div
-        class="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-gradient-to-br from-slate-900 via-brand-900 to-indigo-900 p-6 sm:p-10 text-center shadow-2xl shadow-brand-600/20">
+    <section id="download" class="relative bg-gradient-to-br from-slate-900 via-brand-900 to-indigo-900 py-16 sm:py-20">
+      <!-- Decorative background elements -->
+      <div class="pointer-events-none absolute inset-0 overflow-hidden">
+        <div class="absolute left-1/4 top-0 h-64 w-64 rounded-full bg-brand-500/10 blur-[100px]"></div>
+        <div class="absolute right-1/4 bottom-0 h-64 w-64 rounded-full bg-indigo-500/10 blur-[100px]"></div>
+      </div>
+      
+      <div class="relative mx-auto max-w-5xl px-6 sm:px-12 lg:px-20 text-center">
         <p class="text-xs font-semibold uppercase tracking-[0.35em] text-brand-200">
           Get Started Now
         </p>
@@ -444,7 +533,7 @@
               Starter
             </p>
             <p class="mt-4 text-4xl font-semibold text-white">
-              Free<span class="text-lg text-slate-400"> / 14 days</span>
+              Free
             </p>
             <p class="mt-4 text-sm text-slate-300">
               Try the platform with $10 in free credits. Perfect for testing and prototyping.
@@ -555,13 +644,7 @@
             </div>
           </form>
         </div>
-        
-        <div class="mx-auto mt-8 flex justify-center">
-          <a href="#download"
-            class="h-12 flex items-center justify-center rounded-full bg-white/20 border border-white/30 px-8 text-sm font-semibold text-white shadow-lg hover:bg-white/30 transition hover:-translate-y-0.5 hover:shadow-xl">
-            Download Now
-          </a>
-        </div>
+         
       </div>
     </section>
   </main>
@@ -573,7 +656,7 @@
       <div class="flex gap-6">
         <a class="transition hover:text-white" href="#features">Platform</a>
         <a class="transition hover:text-white" href="#pricing">Pricing</a>
-        <a class="transition hover:text-white" href="#contact">Contact</a>
+        <a class="transition hover:text-white" href="mailto:hello@scalerize.fr">Contact</a>
         <a class="transition hover:text-white" href="https://github.com/Scalerize/Scalerize.InfiniteGpu/blob/main/README.md" target="_blank">Docs</a>
       </div>
     </div>
@@ -581,6 +664,15 @@
 
   <script>
     document.getElementById("year").textContent = new Date().getFullYear();
+
+    // Generate random counts for network stats (< 50)
+    const trainingCount = Math.floor(Math.random() * 10);
+    const inferenceCount = Math.floor((Math.random() * 10) + 40);
+    const providersCount = Math.floor((Math.random() * 10) + 40);
+    
+    document.getElementById("training-count").textContent = trainingCount;
+    document.getElementById("inference-count").textContent = inferenceCount;
+    document.getElementById("providers-count").textContent = providersCount + " Active Providers";
 
     // Subscribe form handler
     document.getElementById("subscribeForm").addEventListener("submit", async function(e) {
