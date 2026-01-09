@@ -113,7 +113,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             return uploadResponse;
         }
 
-        private List<OutputSettingPayload>? ExtractOutputSettings(string parametersJson)
+        public List<OutputSettingPayload>? ExtractOutputSettings(string parametersJson)
         {
             try
             {

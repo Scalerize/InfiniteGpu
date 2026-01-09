@@ -39,15 +39,7 @@ const modeOptions: Array<{
   },
   {
     value: "training",
-    label: (
-      <>
-        Training{" "}
-        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-600">
-          Coming soon
-        </span>
-      </>
-    ),
-    disabled: true,
+    label: "Training",
   },
 ];
 
@@ -66,6 +58,14 @@ type OutputBinding = {
   tensorName: string;
   payloadType: "json" | "text" | "binary";
   fileFormat?: string;
+};
+
+type TrainingOutputBinding = {
+  id: string;
+  tensorName: string;
+  payloadType: "json" | "text" | "binary";
+  fileName: string | null;
+  file: File | null;
 };
 
 type DatasetConfig = {
@@ -116,6 +116,14 @@ const createOutputBinding = (): OutputBinding => ({
   fileFormat: "npz",
 });
 
+const createTrainingOutputBinding = (): TrainingOutputBinding => ({
+  id: `train-output-${Math.random().toString(36).slice(2, 10)}`,
+  tensorName: "",
+  payloadType: "binary",
+  fileName: null,
+  file: null,
+});
+
 const createDatasetConfig = (): DatasetConfig => ({
   sourceType: "upload",
   url: "",
@@ -130,6 +138,9 @@ export const NewTaskRequestDialog = ({
   const nameFieldId = useId();
   const modeFieldId = useId();
   const fileFieldId = useId();
+  const optimizerFileFieldId = useId();
+  const checkpointFileFieldId = useId();
+  const evalFileFieldId = useId();
   const inferenceSectionId = useId();
   const hyperparameterEpochsId = useId();
   const hyperparameterBatchSizeId = useId();
@@ -154,6 +165,9 @@ export const NewTaskRequestDialog = ({
   const [outputBindings, setOutputBindings] = useState<
     Array<OutputBinding>
   >([createOutputBinding()]);
+  const [trainingOutputBindings, setTrainingOutputBindings] = useState<
+    Array<TrainingOutputBinding>
+  >([createTrainingOutputBinding()]);
   const [clientTaskId, setClientTaskId] = useState<string>(() =>
     crypto.randomUUID()
   );
@@ -183,6 +197,12 @@ export const NewTaskRequestDialog = ({
   });
   const [onnxFile, setOnnxFile] = useState<File | null>(null);
   const [onnxFileName, setOnnxFileName] = useState<string | null>(null);
+  const [optimizerFile, setOptimizerFile] = useState<File | null>(null);
+  const [optimizerFileName, setOptimizerFileName] = useState<string | null>(null);
+  const [checkpointFile, setCheckpointFile] = useState<File | null>(null);
+  const [checkpointFileName, setCheckpointFileName] = useState<string | null>(null);
+  const [evalFile, setEvalFile] = useState<File | null>(null);
+  const [evalFileName, setEvalFileName] = useState<string | null>(null);
   const [taskName, setTaskName] = useState<string>("");
   const [, setParsedModel] = useState<OnnxModelParseResult | null>(null);
   const [isParsingModel, setIsParsingModel] = useState<boolean>(false);
@@ -197,8 +217,15 @@ export const NewTaskRequestDialog = ({
       setIsSubmitting(false);
       setInferenceBindings([createInferenceBinding()]);
       setOutputBindings([createOutputBinding()]);
+      setTrainingOutputBindings([createTrainingOutputBinding()]);
       setOnnxFile(null);
       setOnnxFileName(null);
+      setOptimizerFile(null);
+      setOptimizerFileName(null);
+      setCheckpointFile(null);
+      setCheckpointFileName(null);
+      setEvalFile(null);
+      setEvalFileName(null);
       setTaskName("");
     }
   }, [open]);
@@ -229,40 +256,79 @@ export const NewTaskRequestDialog = ({
         setSubmissionError("Please attach an ONNX artifact before proceeding.");
         return false;
       }
+
+      if (selectedMode === "training") {
+        if (!optimizerFile) {
+          setSubmissionError("Please attach an Optimizer ONNX artifact before proceeding.");
+          return false;
+        }
+        if (!checkpointFile) {
+          setSubmissionError("Please attach a Checkpoint artifact before proceeding.");
+          return false;
+        }
+        if (!evalFile) {
+          setSubmissionError("Please attach an Evaluation ONNX artifact before proceeding.");
+          return false;
+        }
+      }
       return true;
     }
     
     // Step 2: Input bindings
-    if (currentStep === 2 && selectedMode === "inference") {
-      if (inferenceBindingMode === "manual") {
-        for (const binding of inferenceBindings) {
-          if (!binding.tensorName.trim()) {
-            setSubmissionError("Every inference binding requires a tensor name.");
-            return false;
+    if (currentStep === 2) {
+      if (selectedMode === "inference") {
+        if (inferenceBindingMode === "manual") {
+          for (const binding of inferenceBindings) {
+            if (!binding.tensorName.trim()) {
+              setSubmissionError("Every inference binding requires a tensor name.");
+              return false;
+            }
+            if (!binding.file) {
+              setSubmissionError(`Binding "${binding.tensorName}" is missing an uploaded file.`);
+              return false;
+            }
           }
-          if (!binding.file) {
-            setSubmissionError(`Binding "${binding.tensorName}" is missing an uploaded file.`);
-            return false;
+        } else {
+          // API mode - just validate tensor names
+          for (const binding of inferenceBindings) {
+            if (!binding.tensorName.trim()) {
+              setSubmissionError("Every inference binding requires a tensor name.");
+              return false;
+            }
           }
         }
-      } else {
-        // API mode - just validate tensor names
-        for (const binding of inferenceBindings) {
-          if (!binding.tensorName.trim()) {
-            setSubmissionError("Every inference binding requires a tensor name.");
-            return false;
-          }
+      } else if (selectedMode === "training") {
+        if (trainingDataset.sourceType === "upload" && !trainingDataset.fileName) {
+          setSubmissionError("Please upload a training dataset.");
+          return false;
+        }
+        if (trainingDataset.sourceType === "url" && !trainingDataset.url) {
+          setSubmissionError("Please provide a training dataset URL.");
+          return false;
         }
       }
       return true;
     }
     
     // Step 3: Output bindings
-    if (currentStep === 3 && selectedMode === "inference") {
-      for (const output of outputBindings) {
-        if (!output.tensorName.trim()) {
-          setSubmissionError("Every output binding requires a tensor name.");
-          return false;
+    if (currentStep === 3) {
+      if (selectedMode === "inference") {
+        for (const output of outputBindings) {
+          if (!output.tensorName.trim()) {
+            setSubmissionError("Every output binding requires a tensor name.");
+            return false;
+          }
+        }
+      } else if (selectedMode === "training") {
+        for (const output of trainingOutputBindings) {
+          if (!output.tensorName.trim()) {
+            setSubmissionError("Every training target binding requires a tensor name.");
+            return false;
+          }
+          if (!output.file) {
+            setSubmissionError(`Target binding "${output.tensorName || "(unnamed)"}" is missing an uploaded file.`);
+            return false;
+          }
         }
       }
       return true;
@@ -303,7 +369,18 @@ export const NewTaskRequestDialog = ({
         }
         
         // Auto-populate output bindings from parsed model
-        if (result.outputs && result.outputs.length > 0) {
+        if (selectedMode === "training") {
+           // For training: populate training output bindings (target/label tensors)
+           const newTrainingOutputBindings: TrainingOutputBinding[] = result.outputs?.map((output) => ({
+            id: `train-output-${Math.random().toString(36).slice(2, 10)}`,
+            tensorName: output.name,
+            payloadType: "binary" as const,
+            fileName: null,
+            file: null,
+          })) || [];
+          
+          setTrainingOutputBindings(newTrainingOutputBindings.length > 0 ? newTrainingOutputBindings : [createTrainingOutputBinding()]);
+        } else if (result.outputs && result.outputs.length > 0) {
           const newOutputs = result.outputs.map((output) => ({
             id: `output-${Math.random().toString(36).slice(2, 10)}`,
             tensorName: output.name,
@@ -369,6 +446,32 @@ export const NewTaskRequestDialog = ({
 
   const handleInferenceBindingFile = (id: string, file: File | null) => {
     setInferenceBindings((current) =>
+      current.map((binding) =>
+        binding.id === id
+          ? {
+              ...binding,
+              fileName: file?.name ?? null,
+              file,
+            }
+          : binding
+      )
+    );
+  };
+
+  const handleTrainingOutputBindingChange = <Field extends keyof TrainingOutputBinding>(
+    id: string,
+    field: Field,
+    value: TrainingOutputBinding[Field]
+  ) => {
+    setTrainingOutputBindings((current) =>
+      current.map((binding) =>
+        binding.id === id ? { ...binding, [field]: value } : binding
+      )
+    );
+  };
+
+  const handleTrainingOutputBindingFile = (id: string, file: File | null) => {
+    setTrainingOutputBindings((current) =>
       current.map((binding) =>
         binding.id === id
           ? {
@@ -464,6 +567,149 @@ export const NewTaskRequestDialog = ({
       setSubmissionStage("Uploading ONNX artifact to Storage…");
       await uploadFileToSas(modelUploadUrl.uploadUri, onnxFile);
 
+      let optimizerUploadUrl;
+      let checkpointUploadUrl;
+      let evalUploadUrl;
+
+      if (selectedMode === "training") {
+        if (!optimizerFile || !checkpointFile || !evalFile) {
+           throw new Error("Missing training artifacts.");
+        }
+
+        setSubmissionStage("Negotiating secure upload channel for Optimizer…");
+        const optimizerFileExtension = getFileExtension(optimizerFile.name) || "onnx";
+        optimizerUploadUrl = await generateTaskUploadUrl({
+          taskId,
+          subtaskId: resolvedSubtaskId,
+          inputName: "optimizer",
+          fileExtension: optimizerFileExtension,
+          fileType: TaskUploadFileType.Model,
+        });
+        setSubmissionStage("Uploading Optimizer artifact…");
+        await uploadFileToSas(optimizerUploadUrl.uploadUri, optimizerFile);
+
+        setSubmissionStage("Negotiating secure upload channel for Checkpoint…");
+        const checkpointFileExtension = getFileExtension(checkpointFile.name) || "ckpt";
+        checkpointUploadUrl = await generateTaskUploadUrl({
+          taskId,
+          subtaskId: resolvedSubtaskId,
+          inputName: "checkpoint",
+          fileExtension: checkpointFileExtension,
+          fileType: TaskUploadFileType.Model,
+        });
+        setSubmissionStage("Uploading Checkpoint artifact…");
+        await uploadFileToSas(checkpointUploadUrl.uploadUri, checkpointFile);
+
+        setSubmissionStage("Negotiating secure upload channel for Evaluation Model…");
+        const evalFileExtension = getFileExtension(evalFile.name) || "onnx";
+        evalUploadUrl = await generateTaskUploadUrl({
+          taskId,
+          subtaskId: resolvedSubtaskId,
+          inputName: "eval",
+          fileExtension: evalFileExtension,
+          fileType: TaskUploadFileType.Model,
+        });
+        setSubmissionStage("Uploading Evaluation Model artifact…");
+        await uploadFileToSas(evalUploadUrl.uploadUri, evalFile);
+      }
+
+      // Upload training input bindings (training features)
+      const trainingInputUploadedBindings: NonNullable<
+        CreateTaskRequestBody["training"]
+      >["inputs"] = [];
+
+      // Upload training output bindings (target/label values for training)
+      const trainingOutputUploadedBindings: NonNullable<
+        CreateTaskRequestBody["training"]
+      >["outputs"] = [];
+
+      if (selectedMode === "training") {
+        // Upload training inputs (from inferenceBindings in training mode)
+        for (const binding of inferenceBindings) {
+          if (!binding.tensorName.trim()) {
+            throw new Error("Every training input binding requires a tensor name.");
+          }
+
+          if (!binding.file) {
+            throw new Error(
+              `Input binding "${binding.tensorName}" is missing an uploaded file.`
+            );
+          }
+
+          setSubmissionStage(
+            `Preparing upload slot for input "${binding.tensorName}"…`
+          );
+          
+          let tensorFileExtension = getFileExtension(binding.file.name ?? "");
+          if (!tensorFileExtension) {
+            tensorFileExtension = binding.payloadType === "json" ? "json" :
+                                 binding.payloadType === "text" ? "txt" : "bin";
+          }
+
+          const tensorUploadUrl = await generateTaskUploadUrl({
+            taskId,
+            subtaskId: resolvedSubtaskId,
+            inputName: binding.tensorName,
+            fileExtension: tensorFileExtension,
+            fileType: TaskUploadFileType.Input,
+          });
+
+          setSubmissionStage(
+            `Uploading input "${binding.tensorName}"…`
+          );
+          await uploadFileToSas(tensorUploadUrl.uploadUri, binding.file);
+
+          trainingInputUploadedBindings.push({
+            tensorName: binding.tensorName,
+            payloadType: mapPayloadType[binding.payloadType],
+            fileUrl: tensorUploadUrl.blobUri,
+          });
+        }
+
+        // Upload training outputs (target values)
+        for (const output of trainingOutputBindings) {
+          if (!output.tensorName.trim()) {
+            throw new Error("Every training target binding requires a tensor name.");
+          }
+
+          if (!output.file) {
+            throw new Error(
+              `Target binding "${output.tensorName}" is missing an uploaded file.`
+            );
+          }
+
+          setSubmissionStage(
+            `Preparing upload slot for target "${output.tensorName}"…`
+          );
+          
+          // Determine file extension based on payload type
+          let tensorFileExtension = getFileExtension(output.file.name ?? "");
+          if (!tensorFileExtension) {
+            tensorFileExtension = output.payloadType === "json" ? "json" :
+                                 output.payloadType === "text" ? "txt" : "bin";
+          }
+
+          const tensorUploadUrl = await generateTaskUploadUrl({
+            taskId,
+            subtaskId: resolvedSubtaskId,
+            inputName: `target_${output.tensorName}`,
+            fileExtension: tensorFileExtension,
+            fileType: TaskUploadFileType.Input,
+          });
+
+          setSubmissionStage(
+            `Uploading target "${output.tensorName}"…`
+          );
+          await uploadFileToSas(tensorUploadUrl.uploadUri, output.file);
+
+          trainingOutputUploadedBindings.push({
+            tensorName: output.tensorName,
+            payloadType: mapPayloadType[output.payloadType],
+            fileUrl: tensorUploadUrl.blobUri,
+          });
+        }
+      }
+
       const bindings: NonNullable<
         CreateTaskRequestBody["inference"]
       >["bindings"] = [];
@@ -519,6 +765,9 @@ export const NewTaskRequestDialog = ({
         taskId,
         type: resolvedTaskType,
         modelUrl: modelUploadUrl.blobUri,
+        optimizerModelUrl: optimizerUploadUrl?.blobUri,
+        checkpointUrl: checkpointUploadUrl?.blobUri,
+        evalModelUrl: evalUploadUrl?.blobUri,
         fillBindingsViaApi,
       };
 
@@ -534,6 +783,13 @@ export const NewTaskRequestDialog = ({
             payloadType: mapPayloadType[output.payloadType],
             fileFormat: output.payloadType === "binary" ? output.fileFormat : undefined,
           })),
+        };
+      }
+
+      if (selectedMode === "training") {
+        requestBody.training = {
+          inputs: trainingInputUploadedBindings,
+          outputs: trainingOutputUploadedBindings,
         };
       }
 
@@ -714,7 +970,7 @@ export const NewTaskRequestDialog = ({
               htmlFor={fileFieldId}
               className="text-sm font-semibold text-slate-700 dark:text-slate-300"
             >
-              ONNX artifact
+              {selectedMode === "training" ? "Training ONNX Model" : "ONNX artifact"}
             </label>
             <FileDropzone
               inputId={fileFieldId}
@@ -735,42 +991,153 @@ export const NewTaskRequestDialog = ({
                 setOnnxFileName(file?.name ?? null);
               }}
             />
-            <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-              <p className="font-medium text-slate-700 dark:text-slate-300">
-                Plenty of ONNX models can be found at{" "}
-                <a
-                  href="https://github.com/onnx/models"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
-                >
-                  https://github.com/onnx/models
-                </a>
-              </p>
-            </div>
-            <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-              <p className="font-medium text-slate-700 dark:text-slate-300">
-                Convert Hugging Face models to ONNX{" "}
-                <a
-                  href="https://huggingface.co/docs/optimum-onnx/installation"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
-                >
-                  using optimus
-                </a>
-                :
-              </p>
-              <code className="mt-1 block select-all rounded bg-slate-200 px-2 py-1 font-mono text-slate-800 dark:bg-slate-900 dark:text-slate-300">
-                optimum-cli export onnx --model meta-llama/Llama-3.2-1B --output_dir meta_llama3_2_1b_onnx
-              </code>
-            </div>
+            
+            {selectedMode === "training" && (
+              <>
+                <div className="mt-4 space-y-2">
+                  <label
+                    htmlFor={optimizerFileFieldId}
+                    className="text-sm font-semibold text-slate-700 dark:text-slate-300"
+                  >
+                    Optimizer ONNX Model
+                  </label>
+                  <FileDropzone
+                    inputId={optimizerFileFieldId}
+                    name="optimizerFile"
+                    accept=".onnx"
+                    emptyState={
+                      <span>
+                        Drag & drop your optimizer .onnx file here
+                      </span>
+                    }
+                    helperText="The optimizer graph."
+                    selectedFileName={optimizerFileName}
+                    onFileSelect={(file) => {
+                      setOptimizerFile(file);
+                      setOptimizerFileName(file?.name ?? null);
+                    }}
+                  />
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <label
+                    htmlFor={checkpointFileFieldId}
+                    className="text-sm font-semibold text-slate-700 dark:text-slate-300"
+                  >
+                    Checkpoint File
+                  </label>
+                  <FileDropzone
+                    inputId={checkpointFileFieldId}
+                    name="checkpointFile"
+                    accept=".ckpt,.ckpt.bin"
+                    emptyState={
+                      <span>
+                        Drag & drop your .ckpt file here
+                      </span>
+                    }
+                    helperText="The initial weights."
+                    selectedFileName={checkpointFileName}
+                    onFileSelect={(file) => {
+                      setCheckpointFile(file);
+                      setCheckpointFileName(file?.name ?? null);
+                    }}
+                  />
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  <label
+                    htmlFor={evalFileFieldId}
+                    className="text-sm font-semibold text-slate-700 dark:text-slate-300"
+                  >
+                    Evaluation ONNX Model
+                  </label>
+                  <FileDropzone
+                    inputId={evalFileFieldId}
+                    name="evalFile"
+                    accept=".onnx"
+                    emptyState={
+                      <span>
+                        Drag & drop your evaluation .onnx file here
+                      </span>
+                    }
+                    helperText="The evaluation graph."
+                    selectedFileName={evalFileName}
+                    onFileSelect={(file) => {
+                      setEvalFile(file);
+                      setEvalFileName(file?.name ?? null);
+                    }}
+                  />
+                </div>
+              </>
+            )}
+
+            {selectedMode === "training" ? (
+              <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                <p className="font-medium text-slate-700 dark:text-slate-300">
+                  Generate training artifacts using onnxruntime-training:
+                </p>
+                <code className="mt-1 block select-all whitespace-pre-wrap rounded bg-white px-2 py-1 font-mono text-slate-800 dark:bg-slate-900 dark:text-slate-300">
+{`# Generate the training artifacts
+artifacts.generate_artifacts(model,
+                             requires_grad = ["parameters", "needing", "gradients"],
+                             frozen_params = ["parameters", "not", "needing", "gradients"],
+                             loss = artifacts.LossType.CrossEntropyLoss,
+                             optimizer = artifacts.OptimType.AdamW,
+                             artifact_directory = path_to_output_artifact_directory)`}
+                </code>
+              </div>
+            ) : (
+              <>
+                <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                  <p className="font-medium text-slate-700 dark:text-slate-300">
+                    Plenty of ONNX models can be found at{" "}
+                    <a
+                      href="https://github.com/onnx/models"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                    >
+                      https://github.com/onnx/models
+                    </a>
+                  </p>
+                </div>
+                <div className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                  <p className="font-medium text-slate-700 dark:text-slate-300">
+                    Convert Hugging Face models to ONNX{" "}
+                    <a
+                      href="https://huggingface.co/docs/optimum-onnx/installation"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 underline transition hover:text-indigo-500 dark:text-indigo-400 dark:hover:text-indigo-300"
+                    >
+                      using optimus
+                    </a>
+                    :
+                  </p>
+                  <code className="mt-1 block select-all rounded bg-white px-2 py-1 font-mono text-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                    optimum-cli export onnx --model meta-llama/Llama-3.2-1B --output_dir meta_llama3_2_1b_onnx
+                  </code>
+                </div>
+              </>
+            )}
+            {selectedMode === "training" && (
+              <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                <p className="font-medium text-slate-700 dark:text-slate-300">
+                  Training configuration
+                </p>
+                <p className="mt-1">
+                  Epochs, batch size, and learning rate are configured within the exported training artifacts.
+                </p>
+              </div>
+            )}
           </div>
         </section>
         )}
 
         {/* Step 2: Input Bindings */}
-        {currentStep === 2 && selectedMode === "inference" && (
+        {currentStep === 2 && (
+          <>
+            {selectedMode === "inference" && (
           <section
             className="space-y-4 rounded-xl border border-indigo-100 bg-indigo-50/30 p-4 dark:border-indigo-900/50 dark:bg-indigo-950/30"
             aria-labelledby={`${inferenceSectionId}-label`}
@@ -1107,10 +1474,228 @@ export const NewTaskRequestDialog = ({
               </div>
             )}
           </section>
+            )}
+            {selectedMode === "training" && (
+              <section className="space-y-6">
+                <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                  <header className="space-y-1">
+                    <h3 className="text-sm font-semibold text-slate-700">
+                      Training dataset
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Provide the primary dataset used for gradient updates. Upload
+                      large archives or reference a signed URI.
+                    </p>
+                  </header>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(["upload", "url"] as const).map((source) => (
+                      <button
+                        key={source}
+                        type="button"
+                        onClick={() =>
+                          setTrainingDataset((prev) => ({
+                            ...prev,
+                            sourceType: source,
+                          }))
+                        }
+                        className={`inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+                          trainingDataset.sourceType === source
+                            ? "border-indigo-300 bg-white text-indigo-600 shadow-sm"
+                            : "border-slate-200 bg-slate-100 text-slate-500 hover:border-indigo-200 hover:text-indigo-500"
+                        }`}
+                      >
+                        {source === "upload"
+                          ? "Upload dataset"
+                          : "Reference via URL"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {trainingDataset.sourceType === "upload" ? (
+                    <FileDropzone
+                      inputId={trainingDatasetFileFieldId}
+                      name="trainDatasetFile"
+                      emptyState="Drop archive or dataset manifest"
+                      helperText="Supports TAR, ZIP, parquet, or sharded dataset manifests."
+                      className="min-h-[160px] bg-white"
+                      selectedFileName={trainingDataset.fileName}
+                      onFileSelect={(file) =>
+                        setTrainingDataset((prev) => ({
+                          ...prev,
+                          fileName: file?.name ?? null,
+                        }))
+                      }
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      <label
+                        htmlFor={trainDatasetUrlFieldId}
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        Dataset URL
+                      </label>
+                      <input
+                        id={trainDatasetUrlFieldId}
+                        name="trainDatasetUrl"
+                        type="url"
+                        value={trainingDataset.url}
+                        onChange={(event) =>
+                          handleDatasetChange(
+                            setTrainingDataset,
+                            "url",
+                            event.target.value
+                          )
+                        }
+                        placeholder="https://storage.example.com/train_manifest.parquet"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
+                        required={trainingDataset.sourceType === "url"}
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <label
+                        htmlFor={trainingDatasetFormatFieldId}
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        Dataset format
+                      </label>
+                      <SelectDropdown
+                        id={trainingDatasetFormatFieldId}
+                        ariaLabel="Training dataset format"
+                        value={trainingDataset.format}
+                        onValueChange={(value) =>
+                          handleDatasetChange(
+                            setTrainingDataset,
+                            "format",
+                            value as DatasetConfig["format"]
+                          )
+                        }
+                        options={datasetFormatOptions.map((option) => ({
+                          value: option.value,
+                          label: option.label,
+                        }))}
+                        triggerClassName="w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                  <header className="space-y-1">
+                    <h3 className="text-sm font-semibold text-slate-700">
+                      Validation dataset
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Optional evaluation split streamed between checkpoints.
+                      Provide a held-out subset to track metrics.
+                    </p>
+                  </header>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(["upload", "url"] as const).map((source) => (
+                      <button
+                        key={source}
+                        type="button"
+                        onClick={() =>
+                          setValidationDataset((prev) => ({
+                            ...prev,
+                            sourceType: source,
+                          }))
+                        }
+                        className={`inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
+                          validationDataset.sourceType === source
+                            ? "border-indigo-300 bg-white text-indigo-600 shadow-sm"
+                            : "border-slate-200 bg-slate-100 text-slate-500 hover:border-indigo-200 hover:text-indigo-500"
+                        }`}
+                      >
+                        {source === "upload"
+                          ? "Upload dataset"
+                          : "Reference via URL"}
+                      </button>
+                    ))}
+                  </div>
+
+                  {validationDataset.sourceType === "upload" ? (
+                    <FileDropzone
+                      inputId={validationDatasetFileFieldId}
+                      name="validationDatasetFile"
+                      emptyState="Drop validation set archive"
+                      helperText="Supports the same formats as the training dataset."
+                      className="min-h-[160px] bg-white"
+                      selectedFileName={validationDataset.fileName}
+                      onFileSelect={(file) =>
+                        setValidationDataset((prev) => ({
+                          ...prev,
+                          fileName: file?.name ?? null,
+                        }))
+                      }
+                    />
+                  ) : (
+                    <div className="space-y-2">
+                      <label
+                        htmlFor={validationDatasetUrlFieldId}
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        Dataset URL
+                      </label>
+                      <input
+                        id={validationDatasetUrlFieldId}
+                        name="validationDatasetUrl"
+                        type="url"
+                        value={validationDataset.url}
+                        onChange={(event) =>
+                          handleDatasetChange(
+                            setValidationDataset,
+                            "url",
+                            event.target.value
+                          )
+                        }
+                        placeholder="https://storage.example.com/validation_manifest.parquet"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <label
+                        htmlFor={validationDatasetFormatFieldId}
+                        className="text-xs font-semibold uppercase tracking-wide text-slate-500"
+                      >
+                        Dataset format
+                      </label>
+                      <SelectDropdown
+                        id={validationDatasetFormatFieldId}
+                        ariaLabel="Validation dataset format"
+                        value={validationDataset.format}
+                        onValueChange={(value) =>
+                          handleDatasetChange(
+                            setValidationDataset,
+                            "format",
+                            value as DatasetConfig["format"]
+                          )
+                        }
+                        options={datasetFormatOptions.map((option) => ({
+                          value: option.value,
+                          label: option.label,
+                        }))}
+                        triggerClassName="w-full"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
+          </>
         )}
 
         {/* Step 3: Output Bindings */}
-        {currentStep === 3 && selectedMode === "inference" && (
+        {currentStep === 3 && (
+          <>
+            {selectedMode === "inference" && (
           <section
             className="space-y-4 rounded-xl border border-emerald-100 bg-emerald-50/30 p-4 dark:border-emerald-900/50 dark:bg-emerald-950/30"
             aria-labelledby="output-settings-label"
@@ -1209,6 +1794,8 @@ export const NewTaskRequestDialog = ({
                           { value: "webp", label: "WebP Image (.webp)" },
                           { value: "bmp", label: "Bitmap Image (.bmp)" },
                           { value: "tiff", label: "TIFF Image (.tiff)" },
+                          { value: "ckpt", label: "Model Checkpoint (.ckpt)" },
+                          { value: "onnx", label: "ONNX Model (.onnx)" },
                         ]}
                         triggerClassName="w-full"
                       />
@@ -1258,293 +1845,158 @@ export const NewTaskRequestDialog = ({
               </button>
             </div>
           </section>
-        )}
+            )}
+            {selectedMode === "training" && (
+              <section className="space-y-4 rounded-xl border border-emerald-100 bg-emerald-50/30 p-4 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+                <div className="flex flex-col gap-1">
+                  <h3 className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">
+                    Training target bindings
+                  </h3>
+                  <p className="text-xs text-emerald-600/80 dark:text-emerald-400/80">
+                    Define target/label tensors for computing loss during training. Upload files containing the expected output values.
+                  </p>
+                </div>
 
-        {selectedMode === "training" && (
-          <section className="space-y-6">
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-              <header className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-700">
-                  Training dataset
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Provide the primary dataset used for gradient updates. Upload
-                  large archives or reference a signed URI.
-                </p>
-              </header>
+                <div className="space-y-4">
+                  {trainingOutputBindings.map((output, index) => (
+                    <div
+                      key={output.id}
+                      className="space-y-3 rounded-lg border border-emerald-100 bg-white/70 p-4 shadow-sm dark:border-emerald-900/50 dark:bg-slate-800/70"
+                    >
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex flex-1 flex-col gap-1">
+                          <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                            Tensor name
+                          </label>
+                          <input
+                            name={`trainingOutputBindings[${index}].tensorName`}
+                            value={output.tensorName}
+                            onChange={(event) =>
+                              handleTrainingOutputBindingChange(
+                                output.id,
+                                "tensorName",
+                                event.target.value
+                              )
+                            }
+                            placeholder="e.g. labels"
+                            className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition placeholder:text-slate-400 focus:border-emerald-300 focus:outline-none focus:ring focus:ring-emerald-200/60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:placeholder:text-slate-500 dark:focus:border-emerald-600 dark:focus:ring-emerald-900/60"
+                            required
+                          />
+                        </div>
 
-              <div className="flex flex-wrap gap-2">
-                {(["upload", "url"] as const).map((source) => (
+                        <div className="flex flex-col gap-1 sm:w-48">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                            Payload type
+                          </span>
+                          <SelectDropdown
+                            ariaLabel="Output payload type"
+                            value={output.payloadType}
+                            onValueChange={(value) =>
+                              handleTrainingOutputBindingChange(
+                                output.id,
+                                "payloadType",
+                                value as TrainingOutputBinding["payloadType"]
+                              )
+                            }
+                            options={[
+                              { value: "json", label: "JSON tensor" },
+                              { value: "text", label: "Plain text" },
+                              { value: "binary", label: "Binary upload" },
+                            ]}
+                            triggerClassName="w-full"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                          {output.payloadType === "binary"
+                            ? "Upload target tensor"
+                            : output.payloadType === "json"
+                            ? "Upload JSON file"
+                            : "Upload text file"}
+                        </label>
+                        <FileDropzone
+                          inputId={`${output.id}-file`}
+                          name={`trainingOutputBindings[${index}].file`}
+                          accept={
+                            output.payloadType === "json"
+                              ? ".json"
+                              : output.payloadType === "text"
+                              ? ".txt"
+                              : undefined
+                          }
+                          emptyState={
+                            output.payloadType === "json"
+                              ? "Attach .json file with target values"
+                              : output.payloadType === "text"
+                              ? "Attach .txt file with target values"
+                              : "Attach .npy, .npz tensor file with target/label values"
+                          }
+                          helperText="Target values used for loss computation during training."
+                          className="min-h-[140px] py-6"
+                          selectedFileName={output.fileName}
+                          onFileSelect={(file) =>
+                            handleTrainingOutputBindingFile(output.id, file)
+                          }
+                        />
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTrainingOutputBindings((current) =>
+                              current.length === 1
+                                ? current
+                                : current.filter(
+                                    (bindingEntry) =>
+                                      bindingEntry.id !== output.id
+                                  )
+                            )
+                          }
+                          className="inline-flex items-center gap-2 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:border-red-900/50 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                          disabled={trainingOutputBindings.length === 1}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove output
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end">
                   <button
-                    key={source}
                     type="button"
                     onClick={() =>
-                      setTrainingDataset((prev) => ({
-                        ...prev,
-                        sourceType: source,
-                      }))
+                      setTrainingOutputBindings((current) => [
+                        ...current,
+                        createTrainingOutputBinding(),
+                      ])
                     }
-                    className={`inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
-                      trainingDataset.sourceType === source
-                        ? "border-indigo-300 bg-white text-indigo-600 shadow-sm"
-                        : "border-slate-200 bg-slate-100 text-slate-500 hover:border-indigo-200 hover:text-indigo-500"
-                    }`}
+                    className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white shadow-sm transition hover:bg-emerald-500 dark:bg-emerald-700 dark:hover:bg-emerald-600"
                   >
-                    {source === "upload"
-                      ? "Upload dataset"
-                      : "Reference via URL"}
+                    <CirclePlus className="h-3.5 w-3.5" />
+                    Add target binding
                   </button>
-                ))}
-              </div>
-
-              {trainingDataset.sourceType === "upload" ? (
-                <FileDropzone
-                  inputId={trainingDatasetFileFieldId}
-                  name="trainDatasetFile"
-                  emptyState="Drop archive or dataset manifest"
-                  helperText="Supports TAR, ZIP, parquet, or sharded dataset manifests."
-                  className="min-h-[160px] bg-white"
-                  selectedFileName={trainingDataset.fileName}
-                  onFileSelect={(file) =>
-                    setTrainingDataset((prev) => ({
-                      ...prev,
-                      fileName: file?.name ?? null,
-                    }))
-                  }
-                />
-              ) : (
-                <div className="space-y-2">
-                  <label
-                    htmlFor={trainDatasetUrlFieldId}
-                    className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                  >
-                    Dataset URL
-                  </label>
-                  <input
-                    id={trainDatasetUrlFieldId}
-                    name="trainDatasetUrl"
-                    type="url"
-                    value={trainingDataset.url}
-                    onChange={(event) =>
-                      handleDatasetChange(
-                        setTrainingDataset,
-                        "url",
-                        event.target.value
-                      )
-                    }
-                    placeholder="https://storage.example.com/train_manifest.parquet"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
-                    required={trainingDataset.sourceType === "url"}
-                  />
                 </div>
-              )}
 
-              <div className="grid gap-4">
-                <div className="space-y-2">
-                  <label
-                    htmlFor={trainingDatasetFormatFieldId}
-                    className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                  >
-                    Dataset format
-                  </label>
-                  <SelectDropdown
-                    id={trainingDatasetFormatFieldId}
-                    ariaLabel="Training dataset format"
-                    value={trainingDataset.format}
-                    onValueChange={(value) =>
-                      handleDatasetChange(
-                        setTrainingDataset,
-                        "format",
-                        value as DatasetConfig["format"]
-                      )
-                    }
-                    options={datasetFormatOptions.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    }))}
-                    triggerClassName="w-full"
-                  />
+                <div className="rounded-md bg-slate-50 p-3 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                  <p className="font-medium text-slate-700 dark:text-slate-300">
+                    Note about training targets
+                  </p>
+                  <p className="mt-1">
+                    Target/label tensors are the expected outputs used to compute the loss during training.
+                    The training graph will use these values to calculate gradients and update weights.
+                  </p>
                 </div>
-              </div>
-            </div>
-
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-              <header className="space-y-1">
-                <h3 className="text-sm font-semibold text-slate-700">
-                  Validation dataset
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Optional evaluation split streamed between checkpoints.
-                  Provide a held-out subset to track metrics.
-                </p>
-              </header>
-
-              <div className="flex flex-wrap gap-2">
-                {(["upload", "url"] as const).map((source) => (
-                  <button
-                    key={source}
-                    type="button"
-                    onClick={() =>
-                      setValidationDataset((prev) => ({
-                        ...prev,
-                        sourceType: source,
-                      }))
-                    }
-                    className={`inline-flex items-center rounded-md border px-3 py-1.5 text-xs font-semibold uppercase tracking-wide transition ${
-                      validationDataset.sourceType === source
-                        ? "border-indigo-300 bg-white text-indigo-600 shadow-sm"
-                        : "border-slate-200 bg-slate-100 text-slate-500 hover:border-indigo-200 hover:text-indigo-500"
-                    }`}
-                  >
-                    {source === "upload"
-                      ? "Upload dataset"
-                      : "Reference via URL"}
-                  </button>
-                ))}
-              </div>
-
-              {validationDataset.sourceType === "upload" ? (
-                <FileDropzone
-                  inputId={validationDatasetFileFieldId}
-                  name="validationDatasetFile"
-                  emptyState="Drop validation set archive"
-                  helperText="Supports the same formats as the training dataset."
-                  className="min-h-[160px] bg-white"
-                  selectedFileName={validationDataset.fileName}
-                  onFileSelect={(file) =>
-                    setValidationDataset((prev) => ({
-                      ...prev,
-                      fileName: file?.name ?? null,
-                    }))
-                  }
-                />
-              ) : (
-                <div className="space-y-2">
-                  <label
-                    htmlFor={validationDatasetUrlFieldId}
-                    className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                  >
-                    Dataset URL
-                  </label>
-                  <input
-                    id={validationDatasetUrlFieldId}
-                    name="validationDatasetUrl"
-                    type="url"
-                    value={validationDataset.url}
-                    onChange={(event) =>
-                      handleDatasetChange(
-                        setValidationDataset,
-                        "url",
-                        event.target.value
-                      )
-                    }
-                    placeholder="https://storage.example.com/validation_manifest.parquet"
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
-                  />
-                </div>
-              )}
-
-              <div className="grid gap-4">
-                <div className="space-y-2">
-                  <label
-                    htmlFor={validationDatasetFormatFieldId}
-                    className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                  >
-                    Dataset format
-                  </label>
-                  <SelectDropdown
-                    id={validationDatasetFormatFieldId}
-                    ariaLabel="Validation dataset format"
-                    value={validationDataset.format}
-                    onValueChange={(value) =>
-                      handleDatasetChange(
-                        setValidationDataset,
-                        "format",
-                        value as DatasetConfig["format"]
-                      )
-                    }
-                    options={datasetFormatOptions.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    }))}
-                    triggerClassName="w-full"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-4 rounded-xl border border-slate-200 bg-white p-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <label
-                  htmlFor={hyperparameterEpochsId}
-                  className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                >
-                  Epochs
-                </label>
-                <input
-                  id={hyperparameterEpochsId}
-                  name="trainEpochs"
-                  type="number"
-                  min={1}
-                  value={trainHyperparameters.epochs}
-                  onChange={(event) =>
-                    setTrainHyperparameters((prev) => ({
-                      ...prev,
-                      epochs: Number.parseInt(event.target.value, 10) || 1,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label
-                  htmlFor={hyperparameterBatchSizeId}
-                  className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                >
-                  Batch size
-                </label>
-                <input
-                  id={hyperparameterBatchSizeId}
-                  name="trainBatchSize"
-                  type="number"
-                  min={1}
-                  value={trainHyperparameters.batchSize}
-                  onChange={(event) =>
-                    setTrainHyperparameters((prev) => ({
-                      ...prev,
-                      batchSize: Number.parseInt(event.target.value, 10) || 1,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label
-                  htmlFor={hyperparameterLearningRateId}
-                  className="text-xs font-semibold uppercase tracking-wide text-slate-500"
-                >
-                  Learning rate
-                </label>
-                <input
-                  id={hyperparameterLearningRateId}
-                  name="trainLearningRate"
-                  type="text"
-                  value={trainHyperparameters.learningRate}
-                  onChange={(event) =>
-                    setTrainHyperparameters((prev) => ({
-                      ...prev,
-                      learningRate: event.target.value,
-                    }))
-                  }
-                  placeholder="Optional, e.g. 3e-5"
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 shadow-sm transition placeholder:text-slate-400 focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60"
-                />
-              </div>
-            </div>
-          </section>
+              </section>
+            )}
+          </>
         )}
+
+
 
         <input
           type="hidden"

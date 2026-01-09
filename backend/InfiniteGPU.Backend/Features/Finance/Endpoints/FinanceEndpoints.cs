@@ -68,6 +68,7 @@ public static class FinanceEndpoints
     }
 
     private static async Task<IResult> CreateSettlementAsync(
+        HttpContext httpContext,
         ClaimsPrincipal principal,
         SettlementRequest request,
         IMediator mediator,
@@ -79,7 +80,24 @@ public static class FinanceEndpoints
             return Results.Unauthorized();
         }
 
-        var command = new CreateSettlementCommand(userId, request.Amount, request.Country, request.BankAccountDetails);
+        var ipAddress = httpContext.Connection.RemoteIpAddress?.ToString();
+        var command = new CreateSettlementCommand(
+            userId,
+            request.Amount,
+            request.Country,
+            request.BankAccountDetails,
+            ipAddress,
+            request.FirstName,
+            request.LastName,
+            request.Phone,
+            request.DateOfBirth,
+            request.AddressLine1,
+            request.AddressLine2,
+            request.City,
+            request.State,
+            request.PostalCode,
+            request.AddressCountry,
+            request.Mcc);
         var result = await mediator.Send(command, cancellationToken);
 
         if (!result.Success)
@@ -92,4 +110,18 @@ public static class FinanceEndpoints
 }
 
 public sealed record TopUpRequest(decimal Amount, string StripePaymentMethodId);
-public sealed record SettlementRequest(decimal Amount, string Country, string BankAccountDetails);
+public sealed record SettlementRequest(
+    decimal Amount,
+    string Country,
+    string BankAccountDetails,
+    string FirstName,
+    string LastName,
+    string? Phone,
+    DateOnly? DateOfBirth,
+    string? AddressLine1,
+    string? AddressLine2,
+    string? City,
+    string? State,
+    string? PostalCode,
+    string? AddressCountry,
+    string? Mcc = "5817");

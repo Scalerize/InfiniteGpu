@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowDownLeft, ArrowUpRight, Banknote, CalendarDays, PiggyBank, Wallet, Plus } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, PiggyBank, Wallet, Plus } from 'lucide-react';
 import { formatUtcToLocal } from '../../../shared/utils/dateTime';
-import { getFinanceSummary, processTopUp, createSettlement } from '../api/financeApi';
+import { getFinanceSummary, processTopUp, createSettlement, type SettlementParams } from '../api/financeApi';
 import { TopUpDialog } from './TopUpDialog';
 import { SettlementDialog } from './SettlementDialog';
 
@@ -26,8 +26,7 @@ export const PaymentsEarningsPanel = () => {
   });
 
   const settlementMutation = useMutation({
-    mutationFn: ({ amount, country, bankAccountDetails }: { amount: number; country: string; bankAccountDetails: string }) =>
-      createSettlement(amount, country, bankAccountDetails),
+    mutationFn: (params: SettlementParams) => createSettlement(params),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['financeSummary'] });
     },
@@ -37,8 +36,8 @@ export const PaymentsEarningsPanel = () => {
     await topUpMutation.mutateAsync({ amount, paymentMethodId });
   };
 
-  const handleSettle = async (amount: number, country: string, bankAccountDetails: string) => {
-    await settlementMutation.mutateAsync({ amount, country, bankAccountDetails });
+  const handleSettle = async (params: SettlementParams) => {
+    await settlementMutation.mutateAsync(params);
   };
 
   if (isLoading) {
@@ -91,15 +90,15 @@ export const PaymentsEarningsPanel = () => {
           />
           <SummaryCard
             icon={<ArrowUpRight className="h-5 w-5 text-emerald-500" />}
-            title="Credits (24h)"
+            title="Credits"
             value={`$${financeSummary.creditsLast24Hours.toFixed(2)}`}
-            helper="Earnings from completed tasks"
+            helper="Last 24 hours"
           />
           <SummaryCard
             icon={<ArrowDownLeft className="h-5 w-5 text-rose-500" />}
-            title="Debits (24h)"
+            title="Debits"
             value={`$${financeSummary.debitsLast24Hours.toFixed(2)}`}
-            helper="Task execution costs"
+            helper="Last 24 hours"
           />
           <SummaryCard
             icon={<PiggyBank className="h-5 w-5 text-amber-500" />}
@@ -119,8 +118,8 @@ export const PaymentsEarningsPanel = () => {
           />
         </section>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2 dark:border-slate-700 dark:bg-slate-900">
+      <div className="grid gap-6">
+        <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
           <header className="flex flex-col gap-1">
             <span className="text-sm font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400">Ledger</span>
             <div className="flex items-baseline justify-between gap-3">
@@ -144,120 +143,32 @@ export const PaymentsEarningsPanel = () => {
                   <div className="flex min-w-0 flex-1 flex-col">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="truncate text-sm font-semibold text-slate-800 dark:text-slate-200">{entry.label}</span>
-                      <span className="text-xs text-slate-400 dark:text-slate-500">
-                        {formatUtcToLocal(entry.createdAt, {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          day: '2-digit',
-                          month: 'short'
-                        })}
-                      </span>
                     </div>
                     <p className="text-sm text-slate-500 dark:text-slate-400">{entry.detail}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
-                      <span className="rounded-full border border-slate-200 px-3 py-1 dark:border-slate-700">
-                        Balance after: <span className="font-medium text-slate-700 dark:text-slate-300">€{entry.balanceAfter.toFixed(2)}</span>
-                      </span>
                       <span className="rounded-full border border-slate-200 px-3 py-1 dark:border-slate-700">Entry ID: {entry.id}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-col items-end">
+                  <div className="flex flex-col items-end gap-0.5">
                     <span
                       className={`text-sm font-semibold ${isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
                     >
-                      {isCredit ? '+' : '-'}€{entry.amount.toFixed(2)}
+                      {isCredit ? '+' : '-'}${entry.amount.toFixed(2)}
                     </span>
-                    <span className="text-xs text-slate-400 dark:text-slate-500">Auto-matched</span>
+                    <span className="text-xs text-slate-400 dark:text-slate-500">
+                      {formatUtcToLocal(entry.createdAt, {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        day: '2-digit',
+                        month: 'short'
+                      })}
+                    </span>
                   </div>
                 </li>
               );
             })}
           </ul>
-        </section>
-
-        <section className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          <header className="flex items-center justify-between">
-            <div>
-              <span className="text-sm font-semibold uppercase tracking-wide text-indigo-500 dark:text-indigo-400">Payouts</span>
-              <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Settlement timeline</h3>
-            </div>
-            <Banknote className="h-6 w-6 text-slate-300 dark:text-slate-600" />
-          </header>
-
-          <div className="space-y-4">
-            {financeSummary.nextPayout && (
-              <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
-                      <CalendarDays className="h-4 w-4 text-indigo-500 dark:text-indigo-400" />
-                      {financeSummary.nextPayout.reference}
-                    </div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Next Payout</div>
-                  </div>
-                  <span className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                    ${financeSummary.nextPayout.amount.toFixed(2)}
-                  </span>
-                </div>
-
-                <div className="mt-3 flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400">
-                  {financeSummary.nextPayout.initiatedAtUtc && (
-                    <span>
-                      Initiated:&nbsp;
-                      <strong className="font-medium text-slate-700 dark:text-slate-300">
-                        {formatUtcToLocal(financeSummary.nextPayout.initiatedAtUtc, {
-                          day: '2-digit',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </strong>
-                    </span>
-                  )}
-                  <span>Status: Pending</span>
-                </div>
-              </div>
-            )}
-
-            {financeSummary.previousPayout && (
-              <div className="rounded-lg border border-slate-100 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
-                      <CalendarDays className="h-4 w-4 text-emerald-500 dark:text-emerald-400" />
-                      {financeSummary.previousPayout.reference}
-                    </div>
-                    <div className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Previous Payout</div>
-                  </div>
-                  <span className="text-base font-semibold text-slate-900 dark:text-slate-100">
-                    ${financeSummary.previousPayout.amount.toFixed(2)}
-                  </span>
-                </div>
-
-                <div className="mt-3 flex flex-col gap-1 text-xs text-slate-500 dark:text-slate-400">
-                  {financeSummary.previousPayout.settledAtUtc && (
-                    <span>
-                      Settled:&nbsp;
-                      <strong className="font-medium text-slate-700 dark:text-slate-300">
-                        {formatUtcToLocal(financeSummary.previousPayout.settledAtUtc, {
-                          day: '2-digit',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </strong>
-                    </span>
-                  )}
-                  <span>Status: Completed</span>
-                </div>
-              </div>
-            )}
-
-            {!financeSummary.nextPayout && !financeSummary.previousPayout && (
-              <div className="text-center py-8 text-slate-500 dark:text-slate-400">No settlement history</div>
-            )}
-          </div>
         </section>
       </div>
       </div>
@@ -273,6 +184,7 @@ export const PaymentsEarningsPanel = () => {
         onClose={() => setIsSettlementDialogOpen(false)}
         onSettle={handleSettle}
         availableBalance={financeSummary.balance}
+        userInfo={financeSummary.userInfo}
       />
     </>
   );

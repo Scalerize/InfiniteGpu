@@ -5,6 +5,7 @@ import {
   useAuthStore,
   type AuthUser,
 } from "../../features/auth/stores/authStore";
+import { updateProfile } from "../../features/auth/api";
 import { UserProfileUpdateDialog } from "../../features/requestor/components/UserProfileUpdateDialog";
 import { AppNavigation } from "../components/AppNavigation";
 import scalerize from "../../assets/logo-blue.png";
@@ -13,6 +14,10 @@ const capitalize = (value: string) =>
   value.length === 0 ? "" : value[0].toUpperCase() + value.slice(1);
 
 const deriveNameParts = (user: AuthUser | null) => {
+  if (user?.firstName && user?.lastName) {
+    return { firstName: user.firstName, lastName: user.lastName };
+  }
+
   if (!user?.email) {
     return { firstName: "", lastName: "" };
   }
@@ -72,15 +77,27 @@ const resolveUserPresentation = (user: AuthUser | null) => {
   }
 
   const fallbackId = user.id?.slice(0, 4)?.toUpperCase() ?? "IG";
-  const label = user.email ?? `User ${fallbackId}`;
+  
+  let label = user.email ?? `User ${fallbackId}`;
+
+  if (user.firstName && user.lastName) {
+    label = `${user.firstName} ${user.lastName}`;
+  } else if (user.userName) {
+    label = user.userName;
+  }
+
   const badge =
     user.role === "Provider"
       ? "Provider account"
       : user.role === "Admin"
       ? "Administrator"
-      : "Requestor account";
+      : "";
 
   const initials = (() => {
+    if (user.firstName && user.lastName) {
+      return (user.firstName[0] + user.lastName[0]).toUpperCase();
+    }
+
     if (user.email) {
       const emailName = user.email.split("@")[0];
       const parts = emailName.split(/[.\-_]/).filter(Boolean);
@@ -111,6 +128,8 @@ export const ProtectedAppShell = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useAuthStore((state) => state.user);
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const token = useAuthStore((state) => state.token);
   const clearAuth = useAuthStore((state) => state.clearAuth);
 
   const derivedNameParts = useMemo(() => deriveNameParts(user), [user]);
@@ -124,7 +143,10 @@ export const ProtectedAppShell = () => {
 
   const userPresentation = useMemo(() => {
     const base = resolveUserPresentation(user);
-    const displayName = `${currentFirstName} ${currentLastName}`.trim();
+    // If we have a custom name (optimistic update), use it for display
+    const displayName = customName 
+      ? `${customName.firstName} ${customName.lastName}`.trim() 
+      : base.label;
 
     return {
       ...base,
@@ -135,7 +157,7 @@ export const ProtectedAppShell = () => {
         base.initials
       ),
     };
-  }, [currentFirstName, currentLastName, user]);
+  }, [currentFirstName, currentLastName, user, customName]);
 
   if (!user) {
     return <Navigate to="/auth/login" state={{ from: location }} replace />;
@@ -186,8 +208,18 @@ export const ProtectedAppShell = () => {
         onDismiss={() => setProfileDialogOpen(false)}
         initialFirstName={currentFirstName}
         initialLastName={currentLastName}
-        onSubmit={({ firstName, lastName }) => {
-          setCustomName({ firstName, lastName });
+        onSubmit={async ({ firstName, lastName }) => {
+          try {
+            const updatedUser = await updateProfile({ firstName, lastName });
+            setAuth({
+              ...user,
+              firstName: updatedUser.firstName,
+              lastName: updatedUser.lastName
+            }, token);
+            setCustomName({ firstName, lastName });
+          } catch (error) {
+            console.error("Failed to update profile", error);
+          }
         }}
       />
     </div>

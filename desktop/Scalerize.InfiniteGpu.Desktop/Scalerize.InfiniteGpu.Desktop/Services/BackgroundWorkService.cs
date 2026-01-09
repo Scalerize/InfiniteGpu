@@ -389,17 +389,44 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             await connection.InvokeAsync("AcknowledgeExecutionStart", subtask.Id, cancellationToken);
             await connection.InvokeAsync("ReportProgress", subtask.Id, 5, cancellationToken);
 
+            Stopwatch stopwatch = null;
             try
             {
-                var modelBytes = await DownloadModelAsync(subtask, cancellationToken);
+                OnnxInferenceResult inferenceResult;
 
-                var inputs = await _inputParsingService.BuildNamedInputsAsync(
-                    subtask.ParametersJson, cancellationToken);
+                bool isTraining = subtask.ExecutionSpec?.TaskType == 0 && !string.IsNullOrEmpty(subtask.ExecutionSpec?.OptimizerModelUrl);
 
-                var stopwatch = Stopwatch.StartNew();
+                if (isTraining)
+                {
+                    var trainingModelBytes = await DownloadModelAsync(subtask.ExecutionSpec!.OnnxModelUrl!, cancellationToken);
+                    var optimizerModelBytes = await DownloadModelAsync(subtask.ExecutionSpec!.OptimizerModelUrl!, cancellationToken);
+                    var checkpointBytes = await DownloadModelAsync(subtask.ExecutionSpec!.CheckpointUrl!, cancellationToken);
+                    var evalModelBytes = await DownloadModelAsync(subtask.ExecutionSpec!.EvalModelUrl!, cancellationToken);
 
-                var inferenceResult = await _onnxRuntimeService.ExecuteOnnxModelAsync(
-                    modelBytes, inputs, cancellationToken);
+                    stopwatch = Stopwatch.StartNew();
+                    var inputs = await _inputParsingService.BuildNamedInputsAsync(subtask.ParametersJson, cancellationToken);
+                    var outputs = await _inputParsingService.BuildNamedOutputsAsync(subtask.ParametersJson, cancellationToken);
+
+                    inferenceResult = await _onnxRuntimeService.ExecuteTrainingSessionAsync(
+                        trainingModelBytes,
+                        optimizerModelBytes,
+                        checkpointBytes,
+                        evalModelBytes,
+                        inputs,
+                        outputs,
+                        cancellationToken);
+                }
+                else
+                {
+                    var modelBytes = await DownloadModelAsync(subtask.OnnxModel?.ReadUri ?? subtask.ExecutionSpec?.OnnxModelUrl ?? string.Empty, cancellationToken);
+
+                    stopwatch = Stopwatch.StartNew();
+                    var inputs = await _inputParsingService.BuildNamedInputsAsync(
+                        subtask.ParametersJson, cancellationToken);
+
+                    inferenceResult = await _onnxRuntimeService.ExecuteOnnxModelAsync(
+                        modelBytes, inputs, cancellationToken);
+                }
 
                 var processedOutputs = await _outputParsingService.ProcessOutputsAsync(
                     subtask.TaskId,
@@ -409,7 +436,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     authToken,
                     cancellationToken);
 
-                stopwatch.Stop();
+                stopwatch?.Stop();
 
                 var resultPayload = new
                 {
@@ -554,20 +581,17 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             }
         }
 
-        private async Task<byte[]> DownloadModelAsync(SubtaskPayload subtask, CancellationToken cancellationToken)
+        private async Task<byte[]> DownloadModelAsync(string uriString, CancellationToken cancellationToken)
         {
-            var uri = ResolveModelUri(subtask);
-            if (uri is null)
+            if (TryCreateUri(uriString, out var uri))
             {
-                throw new InvalidOperationException("Execution request does not contain a valid model URI.");
+                using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-
-            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            response.EnsureSuccessStatusCode();
-
-            return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            throw new InvalidOperationException($"Invalid URI: {uriString}");
         }
 
         private static Uri? ResolveModelUri(SubtaskPayload subtask)
@@ -642,6 +666,10 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         private sealed class ExecutionSpecPayload
         {
             public string? OnnxModelUrl { get; init; }
+            public string? OptimizerModelUrl { get; init; }
+            public string? CheckpointUrl { get; init; }
+            public string? EvalModelUrl { get; init; }
+            public int TaskType { get; init; }
         }
 
         private sealed class ExecutionStatePayload

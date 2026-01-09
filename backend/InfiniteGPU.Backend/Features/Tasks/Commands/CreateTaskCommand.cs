@@ -8,14 +8,16 @@ public record CreateTaskCommand(
     string UserId,
     Guid TaskId,
     string ModelUrl,
+    string? OptimizerModelUrl,
+    string? CheckpointUrl,
+    string? EvalModelUrl,
     TaskType Type,
     bool FillBindingsViaApi,
     Guid? InitialSubtaskId,
-    CreateTaskCommand.InferenceParameters? Inference
+    CreateTaskCommand.InferenceParameters? Inference,
+    CreateTaskCommand.TrainingParameters? Training
 ) : IRequest<TaskDto>
 {
-    public record TrainParameters(int Epochs, int BatchSize);
-
     public record InferenceParameters
     {
         public IReadOnlyList<InferenceBinding> Bindings { get; init; } = Array.Empty<InferenceBinding>();
@@ -32,5 +34,22 @@ public record CreateTaskCommand(
             string TensorName,
             InferencePayloadType PayloadType,
             string? FileFormat);
+    }
+
+    public record TrainingParameters
+    {
+        public IReadOnlyList<TrainingInputBinding> Inputs { get; init; } = Array.Empty<TrainingInputBinding>();
+
+        public IReadOnlyList<TrainingOutputBinding> Outputs { get; init; } = Array.Empty<TrainingOutputBinding>();
+
+        public record TrainingInputBinding(
+            string TensorName,
+            InferencePayloadType PayloadType,
+            string? FileUrl);
+
+        public record TrainingOutputBinding(
+            string TensorName,
+            InferencePayloadType PayloadType,
+            string? FileUrl);
     }
 }

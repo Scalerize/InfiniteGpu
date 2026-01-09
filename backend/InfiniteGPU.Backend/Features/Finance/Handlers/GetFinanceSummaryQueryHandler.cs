@@ -27,10 +27,41 @@ public sealed class GetFinanceSummaryQueryHandler : IRequestHandler<GetFinanceSu
         var user = await _context.Users
             .AsNoTracking()
             .Where(u => u.Id == userId)
-            .Select(u => new { u.Balance })
+            .Select(u => new {
+                u.Balance,
+                u.FirstName,
+                u.LastName,
+                u.Phone,
+                u.DateOfBirth,
+                u.Country,
+                u.Address,
+                u.StripeConnectedAccountId,
+                u.StripeExternalAccountId
+            })
             .FirstOrDefaultAsync(cancellationToken);
 
         var userBalance = user?.Balance ?? 0m;
+        
+        // Build user info for prefilling settlement form
+        UserInfoDto? userInfo = user is not null
+            ? new UserInfoDto(
+                user.FirstName,
+                user.LastName,
+                user.Phone,
+                user.DateOfBirth,
+                user.Country,
+                user.Address is not null ? new UserAddressDto(
+                    user.Address.Line1,
+                    user.Address.Line2,
+                    user.Address.City,
+                    user.Address.State,
+                    user.Address.PostalCode,
+                    user.Address.Country
+                ) : null,
+                user.StripeConnectedAccountId,
+                user.StripeExternalAccountId
+            )
+            : null;
 
         var creditProjections = await _context.Earnings
             .AsNoTracking()
@@ -97,15 +128,18 @@ public sealed class GetFinanceSummaryQueryHandler : IRequestHandler<GetFinanceSu
                 .Select(t => new TaskSnapshot(t.Id, t.OnnxModelBlobUri))
                 .ToDictionaryAsync(t => t.Id, cancellationToken);
 
+        // Exclude failed settlements from calculations and ledger display
+        var nonFailedSettlements = settlementProjections.Where(s => s.Status != SettlementStatus.Failed).ToList();
+
         var totalCredits = creditProjections.Sum(c => c.Amount) + paymentProjections.Sum(p => p.Amount);
-        var totalDebits = withdrawalProjections.Sum(d => d.Amount) + settlementProjections.Sum(s => s.Amount);
+        var totalDebits = withdrawalProjections.Sum(d => d.Amount) + nonFailedSettlements.Sum(s => s.Amount);
         var creditsLast24h = creditProjections.Where(c => c.CreatedAtUtc >= since).Sum(c => c.Amount)
             + paymentProjections.Where(p => p.CreatedAtUtc >= since).Sum(p => p.Amount);
         var debitsLast24h = withdrawalProjections.Where(d => d.CreatedAtUtc >= since).Sum(d => d.Amount)
-            + settlementProjections.Where(s => s.CreatedAtUtc >= since).Sum(s => s.Amount);
+            + nonFailedSettlements.Where(s => s.CreatedAtUtc >= since).Sum(s => s.Amount);
         var pendingBalance = creditProjections.Where(c => c.Status == EarningStatus.Pending).Sum(c => c.Amount);
 
-        var ledgerEntries = BuildLedgerEntries(creditProjections, withdrawalProjections, settlementProjections, paymentProjections, taskLookup);
+        var ledgerEntries = BuildLedgerEntries(creditProjections, withdrawalProjections, nonFailedSettlements, paymentProjections, taskLookup);
         var chronological = ledgerEntries
             .OrderBy(entry => entry.OccurredAtUtc)
             .ThenBy(entry => entry.EntryId, StringComparer.Ordinal)
@@ -149,7 +183,8 @@ public sealed class GetFinanceSummaryQueryHandler : IRequestHandler<GetFinanceSu
             NextPayout: nextPayout,
             PreviousPayout: previousPayout,
             GeneratedAtUtc: now,
-            LedgerEntries: ledger);
+            LedgerEntries: ledger,
+            UserInfo: userInfo);
     }
 
     private static List<LedgerProjection> BuildLedgerEntries(

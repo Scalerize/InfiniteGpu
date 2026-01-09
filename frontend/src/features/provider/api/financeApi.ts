@@ -1,5 +1,25 @@
 import { apiRequest } from '../../../shared/utils/apiClient';
 
+export interface UserAddress {
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  state: string | null;
+  postalCode: string | null;
+  country: string | null;
+}
+
+export interface UserInfo {
+  firstName: string | null;
+  lastName: string | null;
+  phone: string | null;
+  dateOfBirth: string | null;
+  country: string | null;
+  address: UserAddress | null;
+  stripeConnectedAccountId: string | null;
+  stripeExternalAccountId: string | null;
+}
+
 export interface FinanceSummary {
   balance: number;
   netBalance: number;
@@ -12,6 +32,7 @@ export interface FinanceSummary {
   previousPayout: PayoutSnapshot | null;
   generatedAtUtc: string;
   ledgerEntries: LedgerEntry[];
+  userInfo: UserInfo | null;
 }
 
 export interface PayoutSnapshot {
@@ -46,9 +67,27 @@ export const processTopUp = async (amount: number, stripePaymentMethodId: string
   });
 };
 
-export const createSettlement = async (amount: number, country: string, bankAccountDetails: string): Promise<{ settlementId: string }> => {
+export interface SettlementParams {
+  amount: number;
+  country?: string;
+  bankAccountDetails?: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  dateOfBirth?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  addressCountry?: string;
+  mcc?: string;
+  useExistingAccount?: boolean;
+}
+
+export const createSettlement = async (params: SettlementParams): Promise<{ settlementId: string }> => {
   return apiRequest<{ settlementId: string }>('/api/finance/settlement', {
     method: 'POST',
-    body: { amount, country, bankAccountDetails }
+    body: params
   });
 };

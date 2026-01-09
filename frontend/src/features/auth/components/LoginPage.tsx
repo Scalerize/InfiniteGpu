@@ -64,9 +64,12 @@ const buildUserFromToken = (token: string) => {
       : (payload as Record<string, unknown>)['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] ??
         payload.role;
 
+  const userName = (payload as Record<string, unknown>)['unique_name'] as string | undefined;
+
   return {
     id: userId,
     email: resolveEmail(payload as Record<string, unknown>),
+    userName,
     role: resolveRole(rawRole)
   };
 };

@@ -6,6 +6,9 @@ export type UserRole = 'Requestor' | 'Provider' | 'Admin';
 export interface AuthUser {
   id: string;
   email?: string;
+  userName?: string;
+  firstName?: string;
+  lastName?: string;
   role: UserRole;
 }
 

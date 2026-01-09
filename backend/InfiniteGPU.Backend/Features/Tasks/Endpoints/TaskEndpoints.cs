@@ -61,10 +61,14 @@ public static class TaskEndpoints
             userId,
             request.TaskId,
             request.ModelUrl,
+            request.OptimizerModelUrl,
+            request.CheckpointUrl,
+            request.EvalModelUrl,
             request.Type,
             request.FillBindingsViaApi,
             request.InitialSubtaskId,
-            request.Inference);
+            request.Inference,
+            request.Training);
 
         var validationResult = await validator.ValidateAsync(command, cancellationToken);
         if (!validationResult.IsValid)
@@ -214,9 +218,13 @@ public static class TaskEndpoints
         Guid TaskId,
         TaskType Type,
         string ModelUrl,
+        string? OptimizerModelUrl,
+        string? CheckpointUrl,
+        string? EvalModelUrl,
         bool FillBindingsViaApi,
         Guid? InitialSubtaskId,
-        CreateTaskCommand.InferenceParameters? Inference);
+        CreateTaskCommand.InferenceParameters? Inference,
+        CreateTaskCommand.TrainingParameters? Training);
 
     private readonly record struct ValidationError(string Property, string Message);
 

@@ -159,7 +159,7 @@ export const TopUpDialog = ({ isOpen, onClose, onTopUp }: TopUpDialogProps) => {
             htmlFor="amount"
             className="block text-sm font-medium text-slate-700 mb-1 dark:text-slate-300"
           >
-            Amount (€)
+            Amount ($)
           </label>
           <input
             id="amount"

@@ -4,6 +4,7 @@ using InfiniteGPU.Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace InfiniteGPU.Backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260109165352_AddTrainingOutputBindingFields")]
+    partial class AddTrainingOutputBindingFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -87,9 +90,6 @@ namespace InfiniteGPU.Backend.Migrations
                     b.Property<string>("Country")
                         .HasColumnType("nvarchar(2)");
 
-                    b.Property<DateOnly?>("DateOfBirth")
-                        .HasColumnType("date");
-
                     b.Property<string>("Email")
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
@@ -123,9 +123,6 @@ namespace InfiniteGPU.Backend.Migrations
                     b.Property<string>("PasswordHash")
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<string>("Phone")
-                        .HasColumnType("nvarchar(20)");
-
                     b.Property<string>("PhoneNumber")
                         .HasColumnType("nvarchar(max)");
 
@@ -139,9 +136,6 @@ namespace InfiniteGPU.Backend.Migrations
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("StripeConnectedAccountId")
-                        .HasColumnType("nvarchar(255)");
-
-                    b.Property<string>("StripeExternalAccountId")
                         .HasColumnType("nvarchar(255)");
 
                     b.Property<bool>("TwoFactorEnabled")
@@ -801,48 +795,6 @@ namespace InfiniteGPU.Backend.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("InfiniteGPU.Backend.Data.Entities.ApplicationUser", b =>
-                {
-                    b.OwnsOne("InfiniteGPU.Backend.Data.Entities.UserAddress", "Address", b1 =>
-                        {
-                            b1.Property<string>("ApplicationUserId")
-                                .HasColumnType("nvarchar(450)");
-
-                            b1.Property<string>("City")
-                                .HasColumnType("nvarchar(128)")
-                                .HasColumnName("Address_City");
-
-                            b1.Property<string>("Country")
-                                .HasColumnType("nvarchar(2)")
-                                .HasColumnName("Address_Country");
-
-                            b1.Property<string>("Line1")
-                                .HasColumnType("nvarchar(256)")
-                                .HasColumnName("Address_Line1");
-
-                            b1.Property<string>("Line2")
-                                .HasColumnType("nvarchar(256)")
-                                .HasColumnName("Address_Line2");
-
-                            b1.Property<string>("PostalCode")
-                                .HasColumnType("nvarchar(20)")
-                                .HasColumnName("Address_PostalCode");
-
-                            b1.Property<string>("State")
-                                .HasColumnType("nvarchar(128)")
-                                .HasColumnName("Address_State");
-
-                            b1.HasKey("ApplicationUserId");
-
-                            b1.ToTable("AspNetUsers");
-
-                            b1.WithOwner()
-                                .HasForeignKey("ApplicationUserId");
-                        });
-
-                    b.Navigation("Address");
-                });
-
             modelBuilder.Entity("InfiniteGPU.Backend.Data.Entities.Device", b =>
                 {
                     b.HasOne("InfiniteGPU.Backend.Data.Entities.ApplicationUser", "Provider")
@@ -1005,6 +957,9 @@ namespace InfiniteGPU.Backend.Migrations
                             b1.Property<string>("FileUrl")
                                 .HasMaxLength(2048)
                                 .HasColumnType("nvarchar(2048)");
+
+                            b1.Property<string>("Payload")
+                                .HasColumnType("nvarchar(max)");
 
                             b1.Property<int>("PayloadType")
                                 .HasColumnType("int");

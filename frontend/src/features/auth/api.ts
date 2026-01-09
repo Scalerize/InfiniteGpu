@@ -68,3 +68,23 @@ export const resetPassword = async (payload: ResetPasswordRequest): Promise<void
     authenticated: false
   });
 };
+
+export interface UpdateProfileRequest {
+  firstName: string;
+  lastName: string;
+}
+
+export interface UpdateProfileResponse {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+}
+
+export const updateProfile = async (payload: UpdateProfileRequest): Promise<UpdateProfileResponse> => {
+  return apiRequest<UpdateProfileResponse, UpdateProfileRequest>('/api/auth/user', {
+    method: 'PUT',
+    body: payload,
+    authenticated: true
+  });
+};

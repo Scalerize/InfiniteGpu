@@ -46,6 +46,9 @@ export interface CreateTaskRequestBody {
   taskId: string;
   type: TaskType;
   modelUrl: string;
+  optimizerModelUrl?: string;
+  checkpointUrl?: string;
+  evalModelUrl?: string;
   fillBindingsViaApi: boolean;
   initialSubtaskId?: string;
   inference?: {
@@ -61,6 +64,18 @@ export interface CreateTaskRequestBody {
       tensorName: string;
       payloadType: InferencePayloadType;
       fileFormat?: string;
+    }>;
+  };
+  training?: {
+    inputs: Array<{
+      tensorName: string;
+      payloadType: InferencePayloadType;
+      fileUrl: string | null;
+    }>;
+    outputs: Array<{
+      tensorName: string;
+      payloadType: InferencePayloadType;
+      fileUrl: string | null;
     }>;
   };
 }

@@ -2,6 +2,7 @@ using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Microsoft.Windows.AI.MachineLearning;
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -56,6 +57,145 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 Debug.WriteLine($"[OnnxRuntimeService] Model execution failed: {ex}");
                 throw;
             }
+        }
+
+        public async Task<OnnxInferenceResult> ExecuteTrainingSessionAsync(
+            byte[] trainingModel,
+            byte[] optimizerModel,
+            byte[] checkpoint,
+            byte[] evalModel,
+            IReadOnlyList<NamedOnnxValue> inputs,
+            IReadOnlyList<NamedOnnxValue> targetOutputs,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Create a temporary directory for this training session
+            var tempDir = Path.Combine(Path.GetTempPath(), "InfiniteGpu", "Training", Guid.NewGuid().ToString());
+            Directory.CreateDirectory(tempDir);
+
+            var trainingModelPath = Path.Combine(tempDir, "training_model.onnx");
+            var optimizerModelPath = Path.Combine(tempDir, "optimizer_model.onnx");
+            var checkpointPath = Path.Combine(tempDir, "checkpoint.ckpt");
+            var evalModelPath = Path.Combine(tempDir, "eval_model.onnx");
+            var newCheckpointPath = Path.Combine(tempDir, "checkpoint_updated.ckpt");
+
+            // Lists to track disposable FixedBufferOnnxValues
+            var fixedInputs = new List<FixedBufferOnnxValue>();
+            var fixedOutputs = new List<FixedBufferOnnxValue>();
+
+            try
+            {
+                // Write artifacts to temp files
+                await File.WriteAllBytesAsync(trainingModelPath, trainingModel, cancellationToken);
+                await File.WriteAllBytesAsync(optimizerModelPath, optimizerModel, cancellationToken);
+                await File.WriteAllBytesAsync(checkpointPath, checkpoint, cancellationToken);
+                await File.WriteAllBytesAsync(evalModelPath, evalModel, cancellationToken);
+
+                using var sessionOptions = new SessionOptions();
+                
+                // Load checkpoint state from file
+                using var checkpointState = CheckpointState.LoadCheckpoint(checkpointPath);
+                
+                // Create training session from files
+                using var trainingSession = new TrainingSession(checkpointState, trainingModelPath, optimizerModelPath);
+                
+                // Convert NamedOnnxValue to FixedBufferOnnxValue for inputs
+                foreach (var input in inputs)
+                {
+                    var fixedValue = ConvertToFixedBufferOnnxValue(input);
+                    if (fixedValue != null)
+                    {
+                        fixedInputs.Add(fixedValue);
+                    }
+                }
+                
+                // Convert NamedOnnxValue to FixedBufferOnnxValue for outputs (target/label values)
+                foreach (var output in targetOutputs)
+                {
+                    var fixedValue = ConvertToFixedBufferOnnxValue(output);
+                    if (fixedValue != null)
+                    {
+                        fixedOutputs.Add(fixedValue);
+                    }
+                }
+                
+                // Reset gradients before training step
+                trainingSession.LazyResetGrad();
+                
+                // Run training step with inputs and outputs as FixedBufferOnnxValue collections
+                // TrainStep runs the forward pass, computes loss, and backpropagates gradients
+                trainingSession.TrainStep(fixedInputs, fixedOutputs);
+                
+                // Run optimizer step to update weights based on computed gradients
+                trainingSession.OptimizerStep();
+                
+                // Save updated checkpoint to new file
+                CheckpointState.SaveCheckpoint(checkpointState, newCheckpointPath);
+                
+                // Read updated checkpoint back to memory
+                var newCheckpointBytes = await File.ReadAllBytesAsync(newCheckpointPath, cancellationToken);
+                
+                var resultOutputs = new List<OnnxInferenceOutput>
+                {
+                    new OnnxInferenceOutput("updated_weights", "byte[]", new[] { newCheckpointBytes.Length }, newCheckpointBytes)
+                };
+
+                return new OnnxInferenceResult(resultOutputs);
+            }
+            finally
+            {
+                // Dispose all FixedBufferOnnxValues
+                foreach (var fixedInput in fixedInputs)
+                {
+                    fixedInput?.Dispose();
+                }
+                foreach (var fixedOutput in fixedOutputs)
+                {
+                    fixedOutput?.Dispose();
+                }
+                
+                // Cleanup temp directory
+                if (Directory.Exists(tempDir))
+                {
+                    try { Directory.Delete(tempDir, true); } catch { }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Converts a NamedOnnxValue to a FixedBufferOnnxValue for use with TrainingSession.TrainStep
+        /// </summary>
+        private static FixedBufferOnnxValue? ConvertToFixedBufferOnnxValue(NamedOnnxValue namedValue)
+        {
+            var value = namedValue.Value;
+            
+            return value switch
+            {
+                DenseTensor<float> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<double> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<long> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<int> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<short> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<byte> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<sbyte> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<ushort> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<uint> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<ulong> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                DenseTensor<bool> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<float> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<double> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<long> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<int> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<short> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<byte> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<sbyte> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<ushort> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<uint> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<ulong> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                Tensor<bool> tensor => FixedBufferOnnxValue.CreateFromTensor(tensor),
+                _ => throw new NotSupportedException($"Unsupported tensor type for training: {value?.GetType()?.Name ?? "null"}")
+            };
         }
 
         public async Task<bool> InitializeOnnxRuntimeAsync()
