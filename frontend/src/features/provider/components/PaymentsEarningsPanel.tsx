@@ -90,15 +90,15 @@ export const PaymentsEarningsPanel = () => {
           />
           <SummaryCard
             icon={<ArrowUpRight className="h-5 w-5 text-emerald-500" />}
-            title="Credits (24h)"
+            title="Credits"
             value={`$${financeSummary.creditsLast24Hours.toFixed(2)}`}
-            helper="Earnings from completed tasks"
+            helper="Last 24 hours"
           />
           <SummaryCard
             icon={<ArrowDownLeft className="h-5 w-5 text-rose-500" />}
-            title="Debits (24h)"
+            title="Debits"
             value={`$${financeSummary.debitsLast24Hours.toFixed(2)}`}
-            helper="Task execution costs"
+            helper="Last 24 hours"
           />
           <SummaryCard
             icon={<PiggyBank className="h-5 w-5 text-amber-500" />}
@@ -154,7 +154,7 @@ export const PaymentsEarningsPanel = () => {
                     <span
                       className={`text-sm font-semibold ${isCredit ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
                     >
-                      {isCredit ? '+' : '-'}€{entry.amount.toFixed(2)}
+                      {isCredit ? '+' : '-'}${entry.amount.toFixed(2)}
                     </span>
                     <span className="text-xs text-slate-400 dark:text-slate-500">
                       {formatUtcToLocal(entry.createdAt, {
