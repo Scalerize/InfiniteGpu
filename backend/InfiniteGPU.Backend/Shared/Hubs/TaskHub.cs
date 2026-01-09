@@ -1016,6 +1016,8 @@ public class TaskHub : Hub
 
     public static TaskDto BuildTaskDto(Data.Entities.Task task)
     {
+        var isTraining = task.Type == TaskType.Train;
+        
         return new TaskDto
         {
             Id = task.Id,
@@ -1023,7 +1025,7 @@ public class TaskHub : Hub
             Status = task.Status,
             EstimatedCost = task.EstimatedCost,
             FillBindingsViaApi = task.FillBindingsViaApi,
-            Inference = task.InferenceBindings.Any() || task.OutputBindings.Any()
+            Inference = !isTraining && (task.InferenceBindings.Any() || task.OutputBindings.Any())
                 ? new TaskDto.InferenceParametersDto
                 {
                     Bindings = task.InferenceBindings
@@ -1041,6 +1043,28 @@ public class TaskHub : Hub
                             TensorName = output.TensorName,
                             PayloadType = output.PayloadType,
                             FileFormat = output.FileFormat
+                        })
+                        .ToList()
+                }
+                : null,
+            Training = isTraining && (task.InferenceBindings.Any() || task.OutputBindings.Any())
+                ? new TaskDto.TrainingParametersDto
+                {
+                    Inputs = task.InferenceBindings
+                        .Select(binding => new TaskDto.TrainingParametersDto.TrainingBindingDto
+                        {
+                            TensorName = binding.TensorName,
+                            PayloadType = binding.PayloadType,
+                            Payload = binding.Payload,
+                            FileUrl = binding.FileUrl
+                        })
+                        .ToList(),
+                    Outputs = task.OutputBindings
+                        .Select(output => new TaskDto.TrainingParametersDto.TrainingBindingDto
+                        {
+                            TensorName = output.TensorName,
+                            PayloadType = output.PayloadType, 
+                            FileUrl = output.FileUrl
                         })
                         .ToList()
                 }

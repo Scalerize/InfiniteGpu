@@ -71,6 +71,9 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
             UserId = request.UserId,
             Type = request.Type,
             OnnxModelBlobUri = request.ModelUrl,
+            OptimizerModelBlobUri = request.OptimizerModelUrl,
+            CheckpointBlobUri = request.CheckpointUrl,
+            EvalModelBlobUri = request.EvalModelUrl,
             Status = TaskStatusEnum.Pending,
             CreatedAt = now,
             FillBindingsViaApi = request.FillBindingsViaApi,
@@ -107,9 +110,12 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
+        // Serialize both inference and training parameters
+        // The desktop app will read from the appropriate section based on task type
         var parametersPayload = JsonSerializer.Serialize(new
         {
-            inference = request.Inference
+            inference = request.Inference,
+            training = request.Training
         }, serializationOptions);
 
         var executionSpecRunMode = task.Type switch
@@ -122,6 +128,9 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
         {
             runMode = executionSpecRunMode,
             onnxModelUrl = task.OnnxModelBlobUri,
+            optimizerModelUrl = task.OptimizerModelBlobUri,
+            checkpointUrl = task.CheckpointBlobUri,
+            evalModelUrl = task.EvalModelBlobUri,
             taskType = task.Type
         }, serializationOptions);
 
@@ -189,6 +198,9 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
             Id = task.Id,
             Type = task.Type,
             ModelUrl = task.OnnxModelBlobUri,
+            OptimizerModelUrl = task.OptimizerModelBlobUri,
+            CheckpointUrl = task.CheckpointBlobUri,
+            EvalModelUrl = task.EvalModelBlobUri,
             Status = task.Status,
             EstimatedCost = task.EstimatedCost,
             FillBindingsViaApi = task.FillBindingsViaApi,

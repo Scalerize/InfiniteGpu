@@ -48,6 +48,25 @@ export interface RequestorTaskInferenceBindingDto {
 export interface RequestorTaskInferenceDto {
   prompt: string;
   bindings: Array<RequestorTaskInferenceBindingDto>;
+  outputs?: Array<RequestorTaskInferenceOutputBindingDto>;
+}
+
+export interface RequestorTaskInferenceOutputBindingDto {
+  tensorName: string;
+  payloadType: RequestorInferencePayloadType;
+  fileFormat?: string | null;
+}
+
+export interface RequestorTaskTrainingBindingDto {
+  tensorName: string;
+  payloadType: RequestorInferencePayloadType;
+  payload?: string | null;
+  fileUrl?: string | null;
+}
+
+export interface RequestorTaskTrainingDto {
+  inputs: Array<RequestorTaskTrainingBindingDto>;
+  outputs: Array<RequestorTaskTrainingBindingDto>;
 }
 
 export interface RequestorTaskDto {
@@ -59,6 +78,7 @@ export interface RequestorTaskDto {
     batchSize: number;
   } | null;
   inference?: RequestorTaskInferenceDto | null;
+  training?: RequestorTaskTrainingDto | null;
   resources: RequestorTaskResourceSpecification;
   dataSizeGb: number;
   status: RequestorTaskStatus;

@@ -153,21 +153,34 @@ internal static class SubtaskMapping
 
     private static IReadOnlyList<SubtaskDto.InputArtifactDto> BuildInputArtifacts(Data.Entities.Task task)
     {
-        if (task.InferenceBindings == null || task.InferenceBindings.Count == 0)
+        var artifacts = new List<SubtaskDto.InputArtifactDto>();
+
+        if (task.Type == TaskType.Train)
         {
-            return Array.Empty<SubtaskDto.InputArtifactDto>();
+             if (!string.IsNullOrEmpty(task.OnnxModelBlobUri))
+                artifacts.Add(new SubtaskDto.InputArtifactDto { TensorName = "Training Model", FileUrl = task.OnnxModelBlobUri, PayloadType = "Binary" });
+             if (!string.IsNullOrEmpty(task.OptimizerModelBlobUri))
+                artifacts.Add(new SubtaskDto.InputArtifactDto { TensorName = "Optimizer Model", FileUrl = task.OptimizerModelBlobUri, PayloadType = "Binary" });
+             if (!string.IsNullOrEmpty(task.CheckpointBlobUri))
+                artifacts.Add(new SubtaskDto.InputArtifactDto { TensorName = "Checkpoint", FileUrl = task.CheckpointBlobUri, PayloadType = "Binary" });
+             if (!string.IsNullOrEmpty(task.EvalModelBlobUri))
+                artifacts.Add(new SubtaskDto.InputArtifactDto { TensorName = "Eval Model", FileUrl = task.EvalModelBlobUri, PayloadType = "Binary" });
         }
 
-        return task.InferenceBindings
-            .Where(b => !string.IsNullOrWhiteSpace(b.FileUrl) || !string.IsNullOrWhiteSpace(b.Payload))
-            .Select(binding => new SubtaskDto.InputArtifactDto
-            {
-                TensorName = binding.TensorName,
-                PayloadType = binding.PayloadType.ToString(),
-                FileUrl = binding.FileUrl,
-                Payload = string.IsNullOrWhiteSpace(binding.FileUrl) ? binding.Payload : null
-            })
-            .ToArray();
+        if (task.InferenceBindings != null && task.InferenceBindings.Count > 0)
+        {
+            artifacts.AddRange(task.InferenceBindings
+                .Where(b => !string.IsNullOrWhiteSpace(b.FileUrl) || !string.IsNullOrWhiteSpace(b.Payload))
+                .Select(binding => new SubtaskDto.InputArtifactDto
+                {
+                    TensorName = binding.TensorName,
+                    PayloadType = binding.PayloadType.ToString(),
+                    FileUrl = binding.FileUrl,
+                    Payload = string.IsNullOrWhiteSpace(binding.FileUrl) ? binding.Payload : null
+                }));
+        }
+
+        return artifacts;
     }
 
     private static IReadOnlyList<SubtaskDto.OutputArtifactDto> ParseOutputArtifacts(string? resultsJson)

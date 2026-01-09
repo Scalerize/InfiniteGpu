@@ -50,6 +50,10 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             _tokenizer = tokenizerService ?? throw new ArgumentNullException(nameof(tokenizerService));
         }
 
+        /// <summary>
+        /// Builds named ONNX values from input bindings in parametersJson.
+        /// Looks in both training.inputs (preferred for training tasks) and inference.bindings (for inference tasks).
+        /// </summary>
         public async Task<List<NamedOnnxValue>> BuildNamedInputsAsync(string? parametersJson, CancellationToken cancellationToken)
         {
             var inputs = new List<NamedOnnxValue>();
@@ -69,7 +73,38 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     return inputs;
                 }
 
-                if (root.TryGetProperty("inference", out var inferenceNode) && inferenceNode.ValueKind == JsonValueKind.Object)
+                // First, try to read from training.inputs (for training tasks)
+                if (root.TryGetProperty("training", out var trainingNode) && trainingNode.ValueKind == JsonValueKind.Object)
+                {
+                    if (trainingNode.TryGetProperty("inputs", out var trainingInputsNode) && trainingInputsNode.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var bindingNode in trainingInputsNode.EnumerateArray())
+                        {
+                            if (bindingNode.ValueKind != JsonValueKind.Object)
+                            {
+                                continue;
+                            }
+
+                            if (!bindingNode.TryGetProperty("tensorName", out var tensorNameNode) ||
+                                tensorNameNode.ValueKind != JsonValueKind.String ||
+                                string.IsNullOrWhiteSpace(tensorNameNode.GetString()))
+                            {
+                                continue;
+                            }
+
+                            var tensorName = tensorNameNode.GetString()!.Trim();
+
+                            var handled = await TryAddBinaryTensorAsync(tensorName, bindingNode, inputs, cancellationToken);
+                            if (!handled)
+                            {
+                                Debug.WriteLine($"[InputParsingService] Failed to build binary tensor for training input '{tensorName}'.");
+                            }
+                        }
+                    }
+                }
+
+                // Fallback: check inference.bindings for inference tasks or backward compatibility
+                if (inputs.Count == 0 && root.TryGetProperty("inference", out var inferenceNode) && inferenceNode.ValueKind == JsonValueKind.Object)
                 {
                     if (inferenceNode.TryGetProperty("bindings", out var bindingsNode) && bindingsNode.ValueKind == JsonValueKind.Array)
                     {
@@ -105,6 +140,111 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             }
 
             return inputs;
+        }
+
+        /// <summary>
+        /// Builds named ONNX values from output bindings in parametersJson.
+        /// For training, these represent the target/label values needed for loss computation.
+        /// Looks in both training.outputs (preferred for training tasks) and inference.outputs (fallback).
+        /// </summary>
+        public async Task<List<NamedOnnxValue>> BuildNamedOutputsAsync(string? parametersJson, CancellationToken cancellationToken)
+        {
+            var outputs = new List<NamedOnnxValue>();
+
+            if (string.IsNullOrWhiteSpace(parametersJson))
+            {
+                return outputs;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(parametersJson);
+                var root = document.RootElement;
+
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    return outputs;
+                }
+
+                // First, try to read from training.outputs (for training tasks with target/label values)
+                if (root.TryGetProperty("training", out var trainingNode) && trainingNode.ValueKind == JsonValueKind.Object)
+                {
+                    if (trainingNode.TryGetProperty("outputs", out var trainingOutputsNode) && trainingOutputsNode.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var outputNode in trainingOutputsNode.EnumerateArray())
+                        {
+                            if (outputNode.ValueKind != JsonValueKind.Object)
+                            {
+                                continue;
+                            }
+
+                            if (!outputNode.TryGetProperty("tensorName", out var tensorNameNode) ||
+                                tensorNameNode.ValueKind != JsonValueKind.String ||
+                                string.IsNullOrWhiteSpace(tensorNameNode.GetString()))
+                            {
+                                continue;
+                            }
+
+                            var tensorName = tensorNameNode.GetString()!.Trim();
+
+                            // Training outputs must have a fileUrl with actual target data
+                            if (outputNode.TryGetProperty("fileUrl", out var fileUrlNode) &&
+                                fileUrlNode.ValueKind == JsonValueKind.String &&
+                                !string.IsNullOrWhiteSpace(fileUrlNode.GetString()))
+                            {
+                                var handled = await TryAddBinaryTensorAsync(tensorName, outputNode, outputs, cancellationToken);
+                                if (!handled)
+                                {
+                                    Debug.WriteLine($"[InputParsingService] Failed to build binary tensor for training output '{tensorName}'.");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Fallback: check inference.outputs for backward compatibility
+                // (in case outputs with fileUrl were stored there)
+                if (outputs.Count == 0 && root.TryGetProperty("inference", out var inferenceNode) && inferenceNode.ValueKind == JsonValueKind.Object)
+                {
+                    if (inferenceNode.TryGetProperty("outputs", out var outputsNode) && outputsNode.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var outputNode in outputsNode.EnumerateArray())
+                        {
+                            if (outputNode.ValueKind != JsonValueKind.Object)
+                            {
+                                continue;
+                            }
+
+                            if (!outputNode.TryGetProperty("tensorName", out var tensorNameNode) ||
+                                tensorNameNode.ValueKind != JsonValueKind.String ||
+                                string.IsNullOrWhiteSpace(tensorNameNode.GetString()))
+                            {
+                                continue;
+                            }
+
+                            var tensorName = tensorNameNode.GetString()!.Trim();
+
+                            // Check if this output has a fileUrl (contains actual data for training targets)
+                            if (outputNode.TryGetProperty("fileUrl", out var fileUrlNode) &&
+                                fileUrlNode.ValueKind == JsonValueKind.String &&
+                                !string.IsNullOrWhiteSpace(fileUrlNode.GetString()))
+                            {
+                                var handled = await TryAddBinaryTensorAsync(tensorName, outputNode, outputs, cancellationToken);
+                                if (!handled)
+                                {
+                                    Debug.WriteLine($"[InputParsingService] Failed to build binary tensor for output '{tensorName}'.");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (JsonException ex)
+            {
+                Debug.WriteLine($"[InputParsingService] Failed to parse parametersJson for outputs: {ex}");
+            }
+
+            return outputs;
         }
 
         private async Task<bool> TryAddBinaryTensorAsync(string tensorName, JsonElement bindingNode, List<NamedOnnxValue> inputs, CancellationToken cancellationToken)

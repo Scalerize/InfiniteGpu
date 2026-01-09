@@ -4,6 +4,7 @@ using InfiniteGPU.Backend.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace InfiniteGPU.Backend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260109165352_AddTrainingOutputBindingFields")]
+    partial class AddTrainingOutputBindingFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -954,6 +957,9 @@ namespace InfiniteGPU.Backend.Migrations
                             b1.Property<string>("FileUrl")
                                 .HasMaxLength(2048)
                                 .HasColumnType("nvarchar(2048)");
+
+                            b1.Property<string>("Payload")
+                                .HasColumnType("nvarchar(max)");
 
                             b1.Property<int>("PayloadType")
                                 .HasColumnType("int");

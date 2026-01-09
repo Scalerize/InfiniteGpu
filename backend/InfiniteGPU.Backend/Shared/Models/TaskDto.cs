@@ -8,6 +8,12 @@ public class TaskDto
 
     public string ModelUrl { get; set; } = string.Empty;
 
+    public string? OptimizerModelUrl { get; set; }
+
+    public string? CheckpointUrl { get; set; }
+
+    public string? EvalModelUrl { get; set; }
+
     public TrainParametersDto? Train { get; set; }
 
     public ResourceSpecificationDto Resources { get; set; } = new();
@@ -21,6 +27,8 @@ public class TaskDto
     public bool FillBindingsViaApi { get; set; }
 
     public TaskDto.InferenceParametersDto? Inference { get; set; }
+
+    public TaskDto.TrainingParametersDto? Training { get; set; }
 
     public string? ApiKey { get; set; }
 
@@ -71,6 +79,27 @@ public class TaskDto
             public InferencePayloadType PayloadType { get; set; } = InferencePayloadType.Json;
 
             public string? FileFormat { get; set; }
+        }
+    }
+
+    /// <summary>
+    /// Training-specific parameters with separate inputs and outputs (targets/labels).
+    /// </summary>
+    public sealed class TrainingParametersDto
+    {
+        public IReadOnlyList<TrainingBindingDto> Inputs { get; set; } = Array.Empty<TrainingBindingDto>();
+
+        public IReadOnlyList<TrainingBindingDto> Outputs { get; set; } = Array.Empty<TrainingBindingDto>();
+
+        public sealed class TrainingBindingDto
+        {
+            public string TensorName { get; set; } = string.Empty;
+
+            public InferencePayloadType PayloadType { get; set; } = InferencePayloadType.Json;
+
+            public string? Payload { get; set; }
+
+            public string? FileUrl { get; set; }
         }
     }
 

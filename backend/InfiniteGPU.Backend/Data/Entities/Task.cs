@@ -24,6 +24,24 @@ public class Task
     /// </summary>
     [MaxLength(2048)]
     public string? OnnxModelBlobUri { get; set; }
+
+    /// <summary>
+    /// Persistent storage URI for the uploaded Optimizer ONNX model.
+    /// </summary>
+    [MaxLength(2048)]
+    public string? OptimizerModelBlobUri { get; set; }
+
+    /// <summary>
+    /// Persistent storage URI for the uploaded Checkpoint file.
+    /// </summary>
+    [MaxLength(2048)]
+    public string? CheckpointBlobUri { get; set; }
+
+    /// <summary>
+    /// Persistent storage URI for the uploaded Evaluation ONNX model.
+    /// </summary>
+    [MaxLength(2048)]
+    public string? EvalModelBlobUri { get; set; }
     
     /// <summary>
     /// Stored as integer representation of <see cref="TaskStatus" />.
@@ -88,6 +106,9 @@ public class TaskOutputBinding
     public string TensorName { get; set; } = string.Empty;
 
     public InferencePayloadType PayloadType { get; set; } = InferencePayloadType.Json;
+
+    [MaxLength(2048)]
+    public string? FileUrl { get; set; }
 
     [MaxLength(50)]
     public string? FileFormat { get; set; }

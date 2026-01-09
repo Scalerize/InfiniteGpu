@@ -71,7 +71,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 navigationBuilder.Property<Guid>("Id");
                 navigationBuilder.HasKey("Id");
                 navigationBuilder.Property(b => b.TensorName).HasMaxLength(256);
-                navigationBuilder.Property(b => b.PayloadType);
+                navigationBuilder.Property(b => b.PayloadType); 
+                navigationBuilder.Property(b => b.FileUrl).HasMaxLength(2048);
                 navigationBuilder.Property(b => b.FileFormat);
             });
         });
