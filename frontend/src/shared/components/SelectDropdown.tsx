@@ -28,7 +28,7 @@ export interface SelectDropdownProps<TValue extends SelectValueType> {
 
 const baseTriggerClasses =
   'inline-flex w-full items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm text-slate-700 shadow-sm transition focus:border-indigo-300 focus:outline-none focus:ring focus:ring-indigo-200/60 data-[placeholder]:text-slate-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:focus:border-indigo-600 dark:focus:ring-indigo-900/60 dark:data-[placeholder]:text-slate-500';
-const baseContentClasses = 'z-50 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-800';
+const baseContentClasses = 'z-50 w-auto min-w-[var(--radix-select-trigger-width)] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-800';
 const baseItemClasses =
   'relative flex cursor-pointer select-none items-center rounded-md pl-8 pr-3 py-2 text-sm text-slate-700 outline-none transition hover:bg-indigo-50 hover:text-indigo-600 data-[state=checked]:bg-indigo-100 data-[state=checked]:text-indigo-700 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-60 dark:text-slate-200 dark:hover:bg-indigo-950/50 dark:hover:text-indigo-400 dark:data-[state=checked]:bg-indigo-950/70 dark:data-[state=checked]:text-indigo-300';
 
