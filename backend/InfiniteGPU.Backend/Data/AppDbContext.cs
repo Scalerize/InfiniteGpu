@@ -272,6 +272,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Balance)
                 .HasColumnType("decimal(18,6)")
                 .HasDefaultValue(0m);
+            
+            // Configure UserAddress as an owned entity (stored in same table with prefixed columns)
+            entity.OwnsOne(e => e.Address, addressBuilder =>
+            {
+                addressBuilder.Property(a => a.Line1).HasColumnName("Address_Line1");
+                addressBuilder.Property(a => a.Line2).HasColumnName("Address_Line2");
+                addressBuilder.Property(a => a.City).HasColumnName("Address_City");
+                addressBuilder.Property(a => a.State).HasColumnName("Address_State");
+                addressBuilder.Property(a => a.PostalCode).HasColumnName("Address_PostalCode");
+                addressBuilder.Property(a => a.Country).HasColumnName("Address_Country");
+            });
         });
 
         builder.Entity<Settlement>(entity =>

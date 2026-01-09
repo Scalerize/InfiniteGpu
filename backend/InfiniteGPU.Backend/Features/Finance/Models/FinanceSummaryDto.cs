@@ -18,7 +18,26 @@ public sealed record FinanceSummaryDto(
     FinancePayoutSnapshotDto? NextPayout,
     FinancePayoutSnapshotDto? PreviousPayout,
     DateTime GeneratedAtUtc,
-    IReadOnlyList<FinanceLedgerEntryDto> LedgerEntries);
+    IReadOnlyList<FinanceLedgerEntryDto> LedgerEntries,
+    UserInfoDto? UserInfo = null);
+
+public sealed record UserInfoDto(
+    string? FirstName,
+    string? LastName,
+    string? Phone,
+    DateOnly? DateOfBirth,
+    string? Country,
+    UserAddressDto? Address,
+    string? StripeConnectedAccountId,
+    string? StripeExternalAccountId);
+
+public sealed record UserAddressDto(
+    string? Line1,
+    string? Line2,
+    string? City,
+    string? State,
+    string? PostalCode,
+    string? Country);
 
 public sealed record FinancePayoutSnapshotDto(
     string Reference,
