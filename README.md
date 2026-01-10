@@ -8,7 +8,7 @@ InfiniteGPU is a production-ready platform that enables effortless exchange of c
 ## 🎯 Project Goal
 
 Transform how compute power is accessed and shared by creating a frictionless marketplace where:
-- **Requestors** can execute AI inference tasks without expensive infrastructure
+- **Requestors** can execute AI inference & training tasks without expensive infrastructure
 - **Providers** earn passive income by sharing their device's computing resources
 - **The platform** orchestrates task distribution, execution monitoring, and automated payments
 
