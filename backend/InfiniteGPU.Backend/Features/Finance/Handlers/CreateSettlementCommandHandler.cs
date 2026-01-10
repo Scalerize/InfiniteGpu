@@ -545,42 +545,46 @@ public sealed class CreateSettlementCommandHandler : IRequestHandler<CreateSettl
                 }
 
                 // SUCCESS: Now deduct balance, save user info, and update settlement
-                // Use a transaction to ensure atomicity
-                await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+                // Use a transaction with execution strategy to ensure atomicity and compatibility with retry-on-failure
+                var strategy = _context.Database.CreateExecutionStrategy();
                 try
                 {
-                    user.Balance -= request.Amount;
-
-                    // Save user info for future settlements
-                    user.FirstName = request.FirstName;
-                    user.LastName = request.LastName;
-                    user.Phone = request.Phone;
-                    user.DateOfBirth = request.DateOfBirth;
-
-                    // Save address if provided
-                    if (!string.IsNullOrWhiteSpace(request.AddressLine1))
+                    await strategy.ExecuteAsync(async () =>
                     {
-                        user.Address = new UserAddress
+                        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+                        user.Balance -= request.Amount;
+
+                        // Save user info for future settlements
+                        user.FirstName = request.FirstName;
+                        user.LastName = request.LastName;
+                        user.Phone = request.Phone;
+                        user.DateOfBirth = request.DateOfBirth;
+
+                        // Save address if provided
+                        if (!string.IsNullOrWhiteSpace(request.AddressLine1))
                         {
-                            Line1 = request.AddressLine1,
-                            Line2 = request.AddressLine2,
-                            City = request.City,
-                            State = request.State,
-                            PostalCode = request.PostalCode,
-                            Country = request.AddressCountry ?? request.Country?.ToUpperInvariant()
-                        };
-                    }
+                            user.Address = new UserAddress
+                            {
+                                Line1 = request.AddressLine1,
+                                Line2 = request.AddressLine2,
+                                City = request.City,
+                                State = request.State,
+                                PostalCode = request.PostalCode,
+                                Country = request.AddressCountry ?? request.Country?.ToUpperInvariant()
+                            };
+                        }
 
-                    settlement.StripeTransferId = payout.Id;
-                    settlement.Status = SettlementStatus.Processing;
-                    settlement.UpdatedAtUtc = DateTime.UtcNow;
+                        settlement.StripeTransferId = payout.Id;
+                        settlement.Status = SettlementStatus.Processing;
+                        settlement.UpdatedAtUtc = DateTime.UtcNow;
 
-                    await _context.SaveChangesAsync(cancellationToken);
-                    await transaction.CommitAsync(cancellationToken);
+                        await _context.SaveChangesAsync(cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                    });
                 }
                 catch (Exception dbEx)
                 {
-                    await transaction.RollbackAsync(cancellationToken);
                     _logger.LogError(dbEx, "Failed to update database after successful Stripe payout for settlement {SettlementId}", settlement.Id);
 
                     // Payout was created but we couldn't update the database
@@ -740,21 +744,26 @@ public sealed class CreateSettlementCommandHandler : IRequestHandler<CreateSettl
             }
 
             // SUCCESS: Deduct balance and update settlement
-            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+            // Use a transaction with execution strategy to ensure atomicity and compatibility with retry-on-failure
+            var strategy = _context.Database.CreateExecutionStrategy();
             try
             {
-                user.Balance -= amount;
+                await strategy.ExecuteAsync(async () =>
+                {
+                    await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
 
-                settlement.StripeTransferId = payout.Id;
-                settlement.Status = SettlementStatus.Processing;
-                settlement.UpdatedAtUtc = DateTime.UtcNow;
+                    user.Balance -= amount;
 
-                await _context.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
+                    settlement.StripeTransferId = payout.Id;
+                    settlement.Status = SettlementStatus.Processing;
+                    settlement.UpdatedAtUtc = DateTime.UtcNow;
+
+                    await _context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                });
             }
             catch (Exception dbEx)
             {
-                await transaction.RollbackAsync(cancellationToken);
                 _logger.LogError(dbEx, "Failed to update database after successful Stripe payout for settlement {SettlementId}", settlement.Id);
 
                 return new CreateSettlementResult(false, null, "Settlement processing error. Please contact support.");
