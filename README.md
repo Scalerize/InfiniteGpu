@@ -3,12 +3,12 @@
 <img width="1907" height="1090" alt="image" src="https://github.com/user-attachments/assets/0e169d5f-3a19-43ed-93e6-607a1f1d12b6" />
 
 
-InfiniteGPU is a production-ready platform that enables effortless exchange of compute resources for AI workloads. Requestors can offload intensive AI inference tasks to a distributed network of providers, while providers monetize their idle NPU/GPU/CPU capacity, orchestrated through a web interface and native desktop application.
+InfiniteGPU is a production-ready platform that enables effortless exchange of compute resources for AI workloads. Requestors can offload intensive AI inference & training tasks to a distributed network of providers, while providers monetize their idle NPU/GPU/CPU capacity, orchestrated through a web interface and native desktop application.
 
 ## 🎯 Project Goal
 
 Transform how compute power is accessed and shared by creating a frictionless marketplace where:
-- **Requestors** can execute AI inference tasks without expensive infrastructure
+- **Requestors** can execute AI inference & training tasks without expensive infrastructure
 - **Providers** earn passive income by sharing their device's computing resources
 - **The platform** orchestrates task distribution, execution monitoring, and automated payments
 
@@ -51,7 +51,7 @@ Transform how compute power is accessed and shared by creating a frictionless ma
 ### Desktop Application
 **WinUI 3** native Windows application
 
-- **ONNX Runtime** for high-performance AI inference execution (on CPU, GPU and NPU)
+- **ONNX Runtime** for high-performance AI inference execution & AI model training (on CPU, GPU and NPU)
 - **OpenCV Sharp** for image processing and computer vision tasks
 - **SignalR Client** for task orchestration and status updates
 - **System.Management** for hardware metrics collection
@@ -210,7 +210,7 @@ Frontend__Url="http://localhost:5173"
 ### Desktop Technologies
 - **Framework:** WinUI 3
 - **Runtime:** .NET 10.0
-- **AI Inference:** Microsoft.ML.OnnxRuntime 
+- **AI Inference & training:** Microsoft.ML.OnnxRuntime 
 - **Image Processing:** OpenCvSharp4, ImageSharp 
 - **Real-time:** SignalR Client 
 - **DI Container:** Microsoft.Extensions.DependencyInjection 
@@ -221,7 +221,7 @@ Frontend__Url="http://localhost:5173"
 
 1. **Requestor Journey**
    - Register/Login to the platform
-   - Upload ONNX model and create inference task
+   - Upload ONNX model and create inference or training task
    - Configure task parameters and parallelization
    - Fund wallet via Stripe payment
    - Monitor task progress in real-time via SignalR
