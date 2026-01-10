@@ -52,44 +52,49 @@ public sealed class TaskAssignmentService
             return null;
         }
 
-        await using var transaction =
-            await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        // Use execution strategy to ensure compatibility with retry-on-failure
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
 
-        IQueryable<Subtask> query = _context.Subtasks
-            .Include(s => s.Task)
-            .Where(s =>
-                (s.Status == SubtaskStatusEnum.Pending ||
-                 (s.Status == SubtaskStatusEnum.Failed && s.RequiresReassignment)) &&
-                !string.IsNullOrEmpty(s.Task.UserId)
+            IQueryable<Subtask> query = _context.Subtasks
+                .Include(s => s.Task)
+                .Where(s =>
+                    (s.Status == SubtaskStatusEnum.Pending ||
+                     (s.Status == SubtaskStatusEnum.Failed && s.RequiresReassignment)) &&
+                    !string.IsNullOrEmpty(s.Task.UserId)
 #if DEBUG
-                );
+                    );
 #else
-                && s.Task.UserId != providerUserId);
+                    && s.Task.UserId != providerUserId);
 #endif
 
 
-        var subtask = await query
-            .OrderByDescending(s => s.RequiresReassignment)
-            .ThenBy(s => s.CreatedAt)
-            .ThenBy(s => s.Id)
-            .FirstOrDefaultAsync(cancellationToken);
+            var subtask = await query
+                .OrderByDescending(s => s.RequiresReassignment)
+                .ThenBy(s => s.CreatedAt)
+                .ThenBy(s => s.Id)
+                .FirstOrDefaultAsync(cancellationToken);
 
-        if (subtask is null)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            _logger.LogInformation("No available subtask to offer for provider {ProviderId}", providerUserId);
-            return null;
-        }
+            if (subtask is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                _logger.LogInformation("No available subtask to offer for provider {ProviderId}", providerUserId);
+                return null;
+            }
 
-        var assignment = await AssignSubtaskInternalAsync(subtask, provider, "auto-offer", deviceId, cancellationToken);
-        if (assignment is null)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return null;
-        }
+            var assignment = await AssignSubtaskInternalAsync(subtask, provider, "auto-offer", deviceId, cancellationToken);
+            if (assignment is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return null;
+            }
 
-        await transaction.CommitAsync(cancellationToken);
-        return assignment;
+            await transaction.CommitAsync(cancellationToken);
+            return assignment;
+        });
     }
 
     public Task<AssignmentResult?> ClaimNextSubtaskAsync(
