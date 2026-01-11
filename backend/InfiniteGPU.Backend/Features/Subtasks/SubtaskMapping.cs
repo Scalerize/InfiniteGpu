@@ -46,7 +46,12 @@ internal static class SubtaskMapping
             Timeline = BuildTimeline(subtask),
             ConcurrencyToken = EncodeRowVersion(subtask.RowVersion),
             InputArtifacts = BuildInputArtifacts(task),
-            OutputArtifacts = ParseOutputArtifacts(subtask.ResultsJson)
+            OutputArtifacts = ParseOutputArtifacts(subtask.ResultsJson),
+            // Smart partitioning support
+            RequiresPartitioning = subtask.RequiresPartitioning,
+            PartitionCount = subtask.PartitionCount,
+            Partitions = BuildSmartPartitions(subtask),
+            PartitionSummary = BuildPartitionSummary(subtask)
         };
     }
 
@@ -218,6 +223,92 @@ internal static class SubtaskMapping
 
     private static string EncodeRowVersion(byte[]? rowVersion) =>
         rowVersion is { Length: > 0 } ? Convert.ToBase64String(rowVersion) : string.Empty;
+    
+    private static IReadOnlyList<SubtaskDto.SmartPartitionDto> BuildSmartPartitions(Subtask subtask)
+    {
+        if (subtask.Partitions is null || subtask.Partitions.Count == 0)
+        {
+            return Array.Empty<SubtaskDto.SmartPartitionDto>();
+        }
+
+        return subtask.Partitions
+            .OrderBy(p => p.PartitionIndex)
+            .Select(p => new SubtaskDto.SmartPartitionDto
+            {
+                Id = p.Id,
+                SubtaskId = p.SubtaskId,
+                PartitionIndex = p.PartitionIndex,
+                OnnxSubgraphBlobUri = p.OnnxSubgraphBlobUri ?? string.Empty,
+                InputTensorNames = ParseTensorNames(p.InputTensorNamesJson),
+                OutputTensorNames = ParseTensorNames(p.OutputTensorNamesJson),
+                Status = p.Status,
+                Progress = p.Progress,
+                AssignedDeviceId = p.AssignedDeviceId,
+                AssignedDeviceConnectionId = p.AssignedDeviceConnectionId,
+                AssignedToUserId = p.AssignedToUserId,
+                CreatedAtUtc = p.CreatedAtUtc,
+                AssignedAtUtc = p.AssignedAtUtc,
+                StartedAtUtc = p.StartedAtUtc,
+                CompletedAtUtc = p.CompletedAtUtc,
+                FailedAtUtc = p.FailedAtUtc,
+                FailureReason = p.FailureReason,
+                EstimatedMemoryMb = p.EstimatedMemoryMb,
+                EstimatedComputeTflops = p.EstimatedComputeTflops,
+                UpstreamConnectionState = p.UpstreamConnectionState,
+                DownstreamConnectionState = p.DownstreamConnectionState,
+                UpstreamPartitionId = p.UpstreamPartitionId,
+                DownstreamPartitionId = p.DownstreamPartitionId,
+                TensorsBytesReceived = p.TensorsBytesReceived,
+                TensorsBytesSent = p.TensorsBytesSent,
+                ExecutionDurationMs = p.ExecutionDurationMs
+            })
+            .ToArray();
+    }
+    
+    private static SubtaskDto.SmartPartitionSummaryDto? BuildPartitionSummary(Subtask subtask)
+    {
+        if (!subtask.RequiresPartitioning || subtask.Partitions is null || subtask.Partitions.Count == 0)
+        {
+            return null;
+        }
+
+        var partitions = subtask.Partitions.ToList();
+        var completed = partitions.Count(p => p.Status == PartitionStatus.Completed);
+        var failed = partitions.Count(p => p.Status == PartitionStatus.Failed);
+        var executing = partitions.Count(p =>
+            p.Status == PartitionStatus.Executing ||
+            p.Status == PartitionStatus.StreamingOutput ||
+            p.Status == PartitionStatus.Connecting ||
+            p.Status == PartitionStatus.WaitingForInput);
+        var averageProgress = partitions.Average(p => p.Progress);
+
+        return new SubtaskDto.SmartPartitionSummaryDto
+        {
+            TotalPartitions = partitions.Count,
+            CompletedPartitions = completed,
+            FailedPartitions = failed,
+            ExecutingPartitions = executing,
+            AverageProgress = averageProgress,
+            IsDistributed = partitions.Count > 1
+        };
+    }
+    
+    private static IReadOnlyList<string> ParseTensorNames(string? tensorNamesJson)
+    {
+        if (string.IsNullOrWhiteSpace(tensorNamesJson))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(tensorNamesJson, JsonOptions) ?? Array.Empty<string>();
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<string>();
+        }
+    }
 
     private sealed class ExecutionSpecModel
     {

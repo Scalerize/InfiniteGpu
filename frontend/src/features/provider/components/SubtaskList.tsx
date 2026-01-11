@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { motion } from "framer-motion";
-import { Clock, Gauge, Rocket, Timer, Wallet } from "lucide-react";
+import { Clock, Gauge, Rocket, Timer, Wallet, Network, Layers, Wifi, ArrowRight, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { useAvailableSubtasksQuery } from "../queries/useAvailableSubtasksQuery";
 import { useDeviceIdentifierQuery } from "../queries/useDeviceIdentifierQuery";
 import { useDeviceSubtasksQuery } from "../queries/useDeviceSubtasksQuery";
@@ -202,6 +202,10 @@ export const SubtaskList = ({ executingSubtaskId }: SubtaskListProps) => {
                     {getParametersJson(subtask)}
                   </pre>
                 </details>
+                
+                {/* Partition indicator for distributed execution */}
+                <PartitionIndicator subtask={subtask} />
+                
                 <div className="grid gap-2 text-sm sm:grid-cols-2">
                   <InfoStat
                     icon={<Timer className="h-4 w-4" />}
@@ -240,3 +244,103 @@ const InfoStat = ({
     </div>
   </div>
 );
+
+// Partition indicator component for distributed execution visualization
+const PartitionIndicator = ({ subtask }: { subtask: any }) => {
+  // Check if this is a partitioned subtask
+  const partitionCount = subtask.partitionCount ?? 0;
+  const requiresPartitioning = subtask.requiresPartitioning ?? false;
+  const partitionIndex = subtask.partitionIndex ?? null;
+  const partitionProgress = subtask.partitionProgress ?? 0;
+  
+  // If not partitioned, don't show anything
+  if (!requiresPartitioning || partitionCount <= 1) {
+    return null;
+  }
+
+  // Determine partition role
+  const isFirstPartition = partitionIndex === 0;
+  const isLastPartition = partitionIndex === partitionCount - 1;
+  const partitionRole = isFirstPartition
+    ? "Input"
+    : isLastPartition
+      ? "Output"
+      : "Pipeline";
+
+  return (
+    <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 dark:border-violet-900 dark:bg-violet-950/30">
+      <div className="flex items-center justify-between gap-2">
+        {/* Distributed execution badge */}
+        <div className="flex items-center gap-2">
+          <Network className="h-4 w-4 text-violet-500 dark:text-violet-400" />
+          <span className="text-xs font-semibold text-violet-700 dark:text-violet-300">
+            Distributed Execution
+          </span>
+        </div>
+        
+        {/* Partition position */}
+        <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">
+          <Layers className="h-2.5 w-2.5" />
+          Partition {(partitionIndex ?? 0) + 1} of {partitionCount}
+        </span>
+      </div>
+      
+      {/* Pipeline visualization */}
+      <div className="mt-2 flex items-center gap-1">
+        {Array.from({ length: partitionCount }, (_, i) => {
+          const isCurrent = i === partitionIndex;
+          const isPast = i < (partitionIndex ?? 0);
+          
+          let bgClass = "bg-slate-200 dark:bg-slate-700"; // Future
+          let icon = <Layers className="h-2 w-2" />;
+          
+          if (isPast) {
+            bgClass = "bg-emerald-500 dark:bg-emerald-400";
+            icon = <CheckCircle2 className="h-2 w-2 text-white" />;
+          } else if (isCurrent) {
+            bgClass = "bg-indigo-500 dark:bg-indigo-400";
+            icon = <Loader2 className="h-2 w-2 text-white animate-spin" />;
+          }
+          
+          return (
+            <div key={i} className="flex items-center">
+              <div
+                className={`flex h-5 w-5 items-center justify-center rounded ${bgClass}`}
+                title={`Partition ${i + 1}${isCurrent ? " (current)" : ""}`}
+              >
+                {icon}
+              </div>
+              {i < partitionCount - 1 && (
+                <ArrowRight className={`h-3 w-3 mx-0.5 ${isPast ? "text-emerald-500 dark:text-emerald-400" : "text-slate-300 dark:text-slate-600"}`} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      
+      {/* Progress bar */}
+      <div className="mt-2">
+        <div className="flex justify-between text-[10px] text-violet-600 dark:text-violet-400 mb-0.5">
+          <span>Partition Progress</span>
+          <span>{partitionProgress}%</span>
+        </div>
+        <div className="h-1 w-full rounded-full bg-violet-100 dark:bg-violet-900/50 overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 transition-all duration-300"
+            style={{ width: `${partitionProgress}%` }}
+          />
+        </div>
+      </div>
+      
+      {/* Role indicator */}
+      <div className="mt-2 flex items-center gap-1.5 text-[10px] text-violet-600 dark:text-violet-400">
+        <Wifi className="h-3 w-3" />
+        <span>
+          {partitionRole} partition
+          {!isFirstPartition && " • Waiting for upstream tensor"}
+          {!isLastPartition && " • Will send output downstream"}
+        </span>
+      </div>
+    </div>
+  );
+};

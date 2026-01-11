@@ -24,7 +24,18 @@ public class TaskHub : Hub
     private static readonly ConcurrentDictionary<string, string> ConnectionToProviderMap = new();
     private static readonly ConcurrentDictionary<string, Guid> ConnectionToDeviceMap = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>> DeviceConnections = new();
-    private static readonly ConcurrentDictionary<Guid, HardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
+    
+    /// <summary>
+    /// Hardware capabilities for each connected device.
+    /// Public for access by DistributedTaskOrchestrator.
+    /// </summary>
+    public static readonly ConcurrentDictionary<Guid, HardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
+    
+    /// <summary>
+    /// Network metrics for each connected device.
+    /// Public for access by DistributedTaskOrchestrator.
+    /// </summary>
+    public static readonly ConcurrentDictionary<Guid, DeviceNetworkMetrics> DeviceNetworkMetrics = new();
 
     public const string ProvidersGroupName = "Providers";
     public const string OnSubtaskAcceptedEvent = "OnSubtaskAccepted";
@@ -34,6 +45,33 @@ public class TaskHub : Hub
     public const string OnAvailableSubtasksChangedEvent = "OnAvailableSubtasksChanged";
     public const string OnExecutionRequestedEvent = "OnExecutionRequested";
     public const string OnExecutionAcknowledgedEvent = "OnExecutionAcknowledged";
+
+    // WebRTC Signaling Events
+    public const string OnWebRtcOfferEvent = "OnWebRtcOffer";
+    public const string OnWebRtcAnswerEvent = "OnWebRtcAnswer";
+    public const string OnWebRtcIceCandidateEvent = "OnWebRtcIceCandidate";
+    public const string OnWebRtcIceRestartEvent = "OnWebRtcIceRestart";
+
+    // Partition Coordination Events
+    public const string OnPartitionAssignedEvent = "OnPartitionAssigned";
+    public const string OnPartitionReadyEvent = "OnPartitionReady";
+    public const string OnPartitionWaitingForInputEvent = "OnPartitionWaitingForInput";
+    public const string OnPartitionProgressEvent = "OnPartitionProgress";
+    public const string OnPartitionCompletedEvent = "OnPartitionCompleted";
+    public const string OnPartitionFailedEvent = "OnPartitionFailed";
+    public const string OnTensorTransferProgressEvent = "OnTensorTransferProgress";
+    public const string OnSubtaskPartitionsReadyEvent = "OnSubtaskPartitionsReady";
+    
+    // Parent Peer Coordination Events
+    public const string OnParentPeerElectedEvent = "OnParentPeerElected";
+    public const string OnSubgraphDistributionStartEvent = "OnSubgraphDistributionStart";
+    public const string OnSubgraphReceivedEvent = "OnSubgraphReceived";
+    public const string OnSubgraphTransferProgressEvent = "OnSubgraphTransferProgress";
+    public const string OnModelDownloadProgressEvent = "OnModelDownloadProgress";
+    public const string OnPartitioningProgressEvent = "OnPartitioningProgress";
+
+    // Partition group management - maps subtaskId to set of connectionIds involved
+    private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, string>> SubtaskPartitionConnections = new();
 
     public TaskHub(
         AppDbContext context,
@@ -346,6 +384,1057 @@ public class TaskHub : Hub
             await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
         }
     }
+
+    #region WebRTC Signaling Methods
+
+    /// <summary>
+    /// Sends a WebRTC SDP offer to the target partition's device.
+    /// </summary>
+    public async Task SendWebRtcOffer(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string sdpOffer)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "SendWebRtcOffer from partition {FromPartitionId} to partition {ToPartitionId} for subtask {SubtaskId}",
+            fromPartitionId,
+            toPartitionId,
+            subtaskId);
+
+        var targetPartition = await _context.Partitions
+            .Include(p => p.Device)
+            .FirstOrDefaultAsync(p => p.Id == toPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (targetPartition?.ConnectionId is null)
+        {
+            throw new HubException($"Target partition {toPartitionId} not found or not connected.");
+        }
+
+        // Update connection state for the sender
+        var sourcePartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == fromPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+        
+        if (sourcePartition is not null)
+        {
+            sourcePartition.DownstreamConnectionState = WebRtcConnectionState.OfferSent;
+            await _context.SaveChangesAsync(Context.ConnectionAborted);
+        }
+
+        // Register this subtask's partition connection
+        RegisterPartitionConnection(subtaskId, fromPartitionId, Context.ConnectionId);
+
+        await Clients.Client(targetPartition.ConnectionId).SendAsync(
+            OnWebRtcOfferEvent,
+            new WebRtcSignalingMessage
+            {
+                SubtaskId = subtaskId,
+                FromPartitionId = fromPartitionId,
+                ToPartitionId = toPartitionId,
+                Type = WebRtcSignalingType.Offer,
+                Payload = sdpOffer,
+                TimestampUtc = DateTime.UtcNow
+            },
+            Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Sends a WebRTC SDP answer to the originating partition's device.
+    /// </summary>
+    public async Task SendWebRtcAnswer(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string sdpAnswer)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "SendWebRtcAnswer from partition {FromPartitionId} to partition {ToPartitionId} for subtask {SubtaskId}",
+            fromPartitionId,
+            toPartitionId,
+            subtaskId);
+
+        var targetPartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == toPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (targetPartition?.ConnectionId is null)
+        {
+            throw new HubException($"Target partition {toPartitionId} not found or not connected.");
+        }
+
+        // Update connection states
+        var sourcePartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == fromPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+        
+        if (sourcePartition is not null)
+        {
+            sourcePartition.UpstreamConnectionState = WebRtcConnectionState.AnswerSent;
+            await _context.SaveChangesAsync(Context.ConnectionAborted);
+        }
+
+        // Register this subtask's partition connection
+        RegisterPartitionConnection(subtaskId, fromPartitionId, Context.ConnectionId);
+
+        await Clients.Client(targetPartition.ConnectionId).SendAsync(
+            OnWebRtcAnswerEvent,
+            new WebRtcSignalingMessage
+            {
+                SubtaskId = subtaskId,
+                FromPartitionId = fromPartitionId,
+                ToPartitionId = toPartitionId,
+                Type = WebRtcSignalingType.Answer,
+                Payload = sdpAnswer,
+                TimestampUtc = DateTime.UtcNow
+            },
+            Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Sends a WebRTC ICE candidate to the target partition's device.
+    /// </summary>
+    public async Task SendWebRtcIceCandidate(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string iceCandidate)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogTrace(
+            "SendWebRtcIceCandidate from partition {FromPartitionId} to partition {ToPartitionId} for subtask {SubtaskId}",
+            fromPartitionId,
+            toPartitionId,
+            subtaskId);
+
+        var targetPartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == toPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (targetPartition?.ConnectionId is null)
+        {
+            throw new HubException($"Target partition {toPartitionId} not found or not connected.");
+        }
+
+        await Clients.Client(targetPartition.ConnectionId).SendAsync(
+            OnWebRtcIceCandidateEvent,
+            new WebRtcSignalingMessage
+            {
+                SubtaskId = subtaskId,
+                FromPartitionId = fromPartitionId,
+                ToPartitionId = toPartitionId,
+                Type = WebRtcSignalingType.IceCandidate,
+                Payload = iceCandidate,
+                TimestampUtc = DateTime.UtcNow
+            },
+            Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Notifies that WebRTC connection is fully established between partitions.
+    /// </summary>
+    public async Task NotifyWebRtcConnected(Guid subtaskId, Guid partitionId, Guid peerPartitionId, bool isUpstream)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "WebRTC connected: partition {PartitionId} with peer {PeerPartitionId} (upstream={IsUpstream}) for subtask {SubtaskId}",
+            partitionId,
+            peerPartitionId,
+            isUpstream,
+            subtaskId);
+
+        var partition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        if (isUpstream)
+        {
+            partition.UpstreamConnectionState = WebRtcConnectionState.Connected;
+        }
+        else
+        {
+            partition.DownstreamConnectionState = WebRtcConnectionState.Connected;
+        }
+
+        partition.ConnectedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        // Check if all partitions in this subtask are connected
+        await CheckAndNotifySubtaskPartitionsReady(subtaskId, Context.ConnectionAborted);
+    }
+
+    #endregion
+
+    #region Partition Coordination Methods
+
+    /// <summary>
+    /// Reports that a partition is ready with output tensors available.
+    /// </summary>
+    public async Task ReportPartitionReady(Guid subtaskId, Guid partitionId, string[] outputTensorNames, long outputTensorSizeBytes)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "Partition {PartitionId} ready with outputs [{Outputs}] for subtask {SubtaskId}",
+            partitionId,
+            string.Join(", ", outputTensorNames),
+            subtaskId);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        var notification = new PartitionReadyNotification
+        {
+            SubtaskId = subtaskId,
+            PartitionId = partitionId,
+            PartitionIndex = partition.PartitionIndex,
+            OutputTensorNames = outputTensorNames.ToList(),
+            OutputTensorSizeBytes = outputTensorSizeBytes,
+            CompletedAtUtc = DateTime.UtcNow
+        };
+
+        // Notify downstream partition if exists
+        if (partition.DownstreamPartitionId.HasValue)
+        {
+            var downstreamPartition = await _context.Partitions
+                .FirstOrDefaultAsync(p => p.Id == partition.DownstreamPartitionId.Value, Context.ConnectionAborted);
+
+            if (downstreamPartition?.ConnectionId is not null)
+            {
+                await Clients.Client(downstreamPartition.ConnectionId).SendAsync(
+                    OnPartitionReadyEvent,
+                    notification,
+                    Context.ConnectionAborted);
+            }
+        }
+
+        // Also notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnPartitionReadyEvent,
+                notification,
+                Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// Reports that a partition is waiting for input tensors from upstream.
+    /// </summary>
+    public async Task ReportPartitionWaitingForInput(Guid subtaskId, Guid partitionId, string[] requiredTensorNames)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "Partition {PartitionId} waiting for inputs [{Inputs}] for subtask {SubtaskId}",
+            partitionId,
+            string.Join(", ", requiredTensorNames),
+            subtaskId);
+
+        var partition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        partition.Status = PartitionStatus.WaitingForInput;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        // Notify upstream partition if exists
+        if (partition.UpstreamPartitionId.HasValue)
+        {
+            var upstreamPartition = await _context.Partitions
+                .FirstOrDefaultAsync(p => p.Id == partition.UpstreamPartitionId.Value, Context.ConnectionAborted);
+
+            if (upstreamPartition?.ConnectionId is not null)
+            {
+                await Clients.Client(upstreamPartition.ConnectionId).SendAsync(
+                    OnPartitionWaitingForInputEvent,
+                    new
+                    {
+                        SubtaskId = subtaskId,
+                        PartitionId = partitionId,
+                        PartitionIndex = partition.PartitionIndex,
+                        RequiredTensorNames = requiredTensorNames,
+                        TimestampUtc = DateTime.UtcNow
+                    },
+                    Context.ConnectionAborted);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reports partition execution progress.
+    /// </summary>
+    public async Task ReportPartitionProgress(Guid subtaskId, Guid partitionId, int progress)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogTrace(
+            "Partition {PartitionId} progress {Progress}% for subtask {SubtaskId}",
+            partitionId,
+            progress,
+            subtaskId);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        partition.Progress = progress;
+        partition.LastHeartbeatAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        var payload = new
+        {
+            SubtaskId = subtaskId,
+            PartitionId = partitionId,
+            PartitionIndex = partition.PartitionIndex,
+            Progress = progress,
+            TimestampUtc = DateTime.UtcNow
+        };
+
+        // Notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnPartitionProgressEvent,
+                payload,
+                Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// Reports that a partition has completed execution.
+    /// </summary>
+    public async Task ReportPartitionCompleted(Guid subtaskId, Guid partitionId, string? resultJson)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "Partition {PartitionId} completed for subtask {SubtaskId}",
+            partitionId,
+            subtaskId);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        partition.Status = PartitionStatus.Completed;
+        partition.Progress = 100;
+        partition.CompletedAtUtc = DateTime.UtcNow;
+        if (partition.StartedAtUtc.HasValue)
+        {
+            partition.DurationSeconds = (DateTime.UtcNow - partition.StartedAtUtc.Value).TotalSeconds;
+        }
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        var payload = new
+        {
+            SubtaskId = subtaskId,
+            PartitionId = partitionId,
+            PartitionIndex = partition.PartitionIndex,
+            TotalPartitions = partition.TotalPartitions,
+            CompletedAtUtc = partition.CompletedAtUtc,
+            DurationSeconds = partition.DurationSeconds,
+            Result = TryDeserializeResults(resultJson)
+        };
+
+        // Notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnPartitionCompletedEvent,
+                payload,
+                Context.ConnectionAborted);
+        }
+
+        // Check if all partitions completed, complete the subtask
+        await CheckAndCompleteSubtaskAsync(subtaskId, Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Reports that a partition has failed.
+    /// </summary>
+    public async Task ReportPartitionFailed(Guid subtaskId, Guid partitionId, string failureReason)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogWarning(
+            "Partition {PartitionId} failed for subtask {SubtaskId}: {FailureReason}",
+            partitionId,
+            subtaskId,
+            failureReason);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Partitions)
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        partition.Status = PartitionStatus.Failed;
+        partition.FailureReason = failureReason;
+        partition.FailedAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        var payload = new
+        {
+            SubtaskId = subtaskId,
+            PartitionId = partitionId,
+            PartitionIndex = partition.PartitionIndex,
+            FailureReason = failureReason,
+            FailedAtUtc = partition.FailedAtUtc,
+            CanRetry = partition.RetryCount < partition.MaxRetries
+        };
+
+        // Notify all partitions in this subtask to abort
+        if (partition.Subtask?.Partitions is not null)
+        {
+            foreach (var otherPartition in partition.Subtask.Partitions.Where(p => p.Id != partitionId && p.ConnectionId is not null))
+            {
+                await Clients.Client(otherPartition.ConnectionId!).SendAsync(
+                    OnPartitionFailedEvent,
+                    payload,
+                    Context.ConnectionAborted);
+            }
+        }
+
+        // Notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnPartitionFailedEvent,
+                payload,
+                Context.ConnectionAborted);
+        }
+
+        // Fail the entire subtask
+        await FailSubtaskDueToPartitionFailureAsync(subtaskId, partitionId, failureReason, Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Reports tensor transfer progress between partitions.
+    /// </summary>
+    public async Task ReportTensorTransferProgress(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string tensorName, long bytesTransferred, long totalBytes)
+    {
+        var providerUserId = RequireProvider();
+
+        var progressPercent = totalBytes > 0 ? (int)((bytesTransferred * 100) / totalBytes) : 0;
+
+        _logger.LogTrace(
+            "Tensor transfer {TensorName}: {Progress}% ({BytesTransferred}/{TotalBytes}) from {FromPartitionId} to {ToPartitionId}",
+            tensorName,
+            progressPercent,
+            bytesTransferred,
+            totalBytes,
+            fromPartitionId,
+            toPartitionId);
+
+        var payload = new TensorTransferProgress
+        {
+            SubtaskId = subtaskId,
+            FromPartitionId = fromPartitionId,
+            ToPartitionId = toPartitionId,
+            TensorName = tensorName,
+            BytesTransferred = bytesTransferred,
+            TotalBytes = totalBytes,
+            ProgressPercent = progressPercent
+        };
+
+        // Notify task group
+        await Clients.Group(SubtaskGroupName(subtaskId)).SendAsync(
+            OnTensorTransferProgressEvent,
+            payload,
+            Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Updates measured network metrics between partitions.
+    /// </summary>
+    public async Task UpdateNetworkMetrics(Guid subtaskId, Guid partitionId, Guid peerPartitionId, long bandwidthBps, int rttMs)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogDebug(
+            "Network metrics for partition {PartitionId} -> {PeerPartitionId}: {BandwidthMbps} Mbps, {RttMs} ms RTT",
+            partitionId,
+            peerPartitionId,
+            bandwidthBps / 1_000_000.0,
+            rttMs);
+
+        var partition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is not null)
+        {
+            partition.MeasuredBandwidthBps = bandwidthBps;
+            partition.MeasuredRttMs = rttMs;
+            await _context.SaveChangesAsync(Context.ConnectionAborted);
+        }
+    }
+
+    #endregion
+
+    #region Parent Peer Coordination Methods
+
+    /// <summary>
+    /// Called by parent peer when it starts downloading the full ONNX model.
+    /// </summary>
+    public async Task ReportModelDownloadProgress(Guid subtaskId, Guid partitionId, int progressPercent, long bytesDownloaded, long totalBytes)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogDebug(
+            "Model download progress for partition {PartitionId}: {Progress}% ({BytesDownloaded}/{TotalBytes})",
+            partitionId,
+            progressPercent,
+            bytesDownloaded,
+            totalBytes);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        if (!partition.IsParentPeer)
+        {
+            throw new HubException($"Partition {partitionId} is not the parent peer.");
+        }
+
+        partition.Status = PartitionStatus.DownloadingFullModel;
+        partition.Progress = progressPercent / 3; // Download is 0-33% of overall progress
+        partition.LastHeartbeatAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        var payload = new
+        {
+            SubtaskId = subtaskId,
+            PartitionId = partitionId,
+            ProgressPercent = progressPercent,
+            BytesDownloaded = bytesDownloaded,
+            TotalBytes = totalBytes,
+            TimestampUtc = DateTime.UtcNow
+        };
+
+        // Notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnModelDownloadProgressEvent,
+                payload,
+                Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// Called by parent peer when it starts partitioning the ONNX model.
+    /// </summary>
+    public async Task ReportPartitioningProgress(Guid subtaskId, Guid partitionId, int progressPercent, int partitionsCreated, int totalPartitions)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogDebug(
+            "Partitioning progress for partition {PartitionId}: {Progress}% ({Created}/{Total} partitions)",
+            partitionId,
+            progressPercent,
+            partitionsCreated,
+            totalPartitions);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        partition.Status = PartitionStatus.Partitioning;
+        partition.Progress = 33 + (progressPercent / 3); // Partitioning is 33-66% of overall progress
+        partition.LastHeartbeatAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        var payload = new
+        {
+            SubtaskId = subtaskId,
+            PartitionId = partitionId,
+            ProgressPercent = progressPercent,
+            PartitionsCreated = partitionsCreated,
+            TotalPartitions = totalPartitions,
+            TimestampUtc = DateTime.UtcNow
+        };
+
+        // Notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnPartitioningProgressEvent,
+                payload,
+                Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// Called by parent peer when it starts distributing subgraphs to child peers.
+    /// </summary>
+    public async Task ReportSubgraphDistributionStart(Guid subtaskId, Guid parentPartitionId, Guid[] childPartitionIds, long[] subgraphSizes)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "Starting subgraph distribution from parent {ParentPartitionId} to {ChildCount} children",
+            parentPartitionId,
+            childPartitionIds.Length);
+
+        var parentPartition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Partitions)
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == parentPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (parentPartition is null)
+        {
+            throw new HubException($"Parent partition {parentPartitionId} not found.");
+        }
+
+        parentPartition.Status = PartitionStatus.DistributingSubgraphs;
+        parentPartition.Progress = 66; // Distribution starts at 66%
+        parentPartition.LastHeartbeatAtUtc = DateTime.UtcNow;
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        // Update child partitions to WaitingForSubgraph status
+        for (int i = 0; i < childPartitionIds.Length; i++)
+        {
+            var childPartition = parentPartition.Subtask?.Partitions?.FirstOrDefault(p => p.Id == childPartitionIds[i]);
+            if (childPartition is not null)
+            {
+                childPartition.Status = PartitionStatus.WaitingForSubgraph;
+                childPartition.SubgraphReceiveStatus = SubgraphReceiveStatus.Pending;
+                if (i < subgraphSizes.Length)
+                {
+                    childPartition.OnnxSubgraphSizeBytes = subgraphSizes[i];
+                }
+            }
+        }
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        // Notify all child partitions
+        foreach (var childId in childPartitionIds)
+        {
+            var child = parentPartition.Subtask?.Partitions?.FirstOrDefault(p => p.Id == childId);
+            if (child?.ConnectionId is not null)
+            {
+                await Clients.Client(child.ConnectionId).SendAsync(
+                    OnSubgraphDistributionStartEvent,
+                    new
+                    {
+                        SubtaskId = subtaskId,
+                        ParentPartitionId = parentPartitionId,
+                        ChildPartitionId = childId,
+                        ExpectedSubgraphSizeBytes = child.OnnxSubgraphSizeBytes,
+                        TimestampUtc = DateTime.UtcNow
+                    },
+                    Context.ConnectionAborted);
+            }
+        }
+
+        // Notify task owner
+        if (parentPartition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(parentPartition.Subtask.Task.UserId)).SendAsync(
+                OnSubgraphDistributionStartEvent,
+                new
+                {
+                    SubtaskId = subtaskId,
+                    ParentPartitionId = parentPartitionId,
+                    ChildPartitionIds = childPartitionIds,
+                    SubgraphSizes = subgraphSizes,
+                    TimestampUtc = DateTime.UtcNow
+                },
+                Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// Called by parent peer to report subgraph transfer progress to a specific child.
+    /// </summary>
+    public async Task ReportSubgraphTransferProgress(Guid subtaskId, Guid parentPartitionId, Guid childPartitionId, long bytesTransferred, long totalBytes)
+    {
+        var providerUserId = RequireProvider();
+
+        var progressPercent = totalBytes > 0 ? (int)((bytesTransferred * 100) / totalBytes) : 0;
+
+        _logger.LogTrace(
+            "Subgraph transfer to {ChildPartitionId}: {Progress}% ({BytesTransferred}/{TotalBytes})",
+            childPartitionId,
+            progressPercent,
+            bytesTransferred,
+            totalBytes);
+
+        var childPartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == childPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (childPartition is not null)
+        {
+            childPartition.SubgraphReceiveStatus = SubgraphReceiveStatus.Receiving;
+            await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+            if (childPartition.ConnectionId is not null)
+            {
+                await Clients.Client(childPartition.ConnectionId).SendAsync(
+                    OnSubgraphTransferProgressEvent,
+                    new
+                    {
+                        SubtaskId = subtaskId,
+                        FromPartitionId = parentPartitionId,
+                        ToPartitionId = childPartitionId,
+                        BytesTransferred = bytesTransferred,
+                        TotalBytes = totalBytes,
+                        ProgressPercent = progressPercent,
+                        TimestampUtc = DateTime.UtcNow
+                    },
+                    Context.ConnectionAborted);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Called by child peer when it has fully received its subgraph from parent.
+    /// </summary>
+    public async Task ReportSubgraphReceived(Guid subtaskId, Guid partitionId, long subgraphSizeBytes, bool isValid)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "Subgraph received by partition {PartitionId}: {SizeBytes} bytes, valid={IsValid}",
+            partitionId,
+            subgraphSizeBytes,
+            isValid);
+
+        var partition = await _context.Partitions
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Partitions)
+            .Include(p => p.Subtask)
+            .ThenInclude(s => s.Task)
+            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (partition is null)
+        {
+            throw new HubException($"Partition {partitionId} not found.");
+        }
+
+        partition.SubgraphReceiveStatus = isValid ? SubgraphReceiveStatus.Received : SubgraphReceiveStatus.Failed;
+        partition.OnnxSubgraphSizeBytes = subgraphSizeBytes;
+        partition.Status = isValid ? PartitionStatus.Ready : PartitionStatus.Failed;
+        
+        if (!isValid)
+        {
+            partition.FailureReason = "Invalid subgraph received from parent peer";
+            partition.FailedAtUtc = DateTime.UtcNow;
+        }
+        
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+
+        // Find parent partition and notify
+        var parentPartition = partition.Subtask?.Partitions?.FirstOrDefault(p => p.IsParentPeer);
+        if (parentPartition?.ConnectionId is not null)
+        {
+            await Clients.Client(parentPartition.ConnectionId).SendAsync(
+                OnSubgraphReceivedEvent,
+                new
+                {
+                    SubtaskId = subtaskId,
+                    ChildPartitionId = partitionId,
+                    SubgraphSizeBytes = subgraphSizeBytes,
+                    IsValid = isValid,
+                    TimestampUtc = DateTime.UtcNow
+                },
+                Context.ConnectionAborted);
+        }
+
+        // Notify task owner
+        if (partition.Subtask?.Task?.UserId is not null)
+        {
+            await Clients.Group(UserGroupName(partition.Subtask.Task.UserId)).SendAsync(
+                OnSubgraphReceivedEvent,
+                new
+                {
+                    SubtaskId = subtaskId,
+                    PartitionId = partitionId,
+                    SubgraphSizeBytes = subgraphSizeBytes,
+                    IsValid = isValid,
+                    TimestampUtc = DateTime.UtcNow
+                },
+                Context.ConnectionAborted);
+        }
+
+        // Check if all subgraphs are received and ready
+        if (isValid)
+        {
+            await CheckAndNotifyAllSubgraphsReady(subtaskId, Context.ConnectionAborted);
+        }
+        else
+        {
+            await FailSubtaskDueToPartitionFailureAsync(subtaskId, partitionId, "Invalid subgraph received from parent peer", Context.ConnectionAborted);
+        }
+    }
+
+    /// <summary>
+    /// Called by a device to report its network metrics.
+    /// </summary>
+    public async Task ReportNetworkMetrics(long bandwidthBps, int latencyMs, string? region)
+    {
+        var providerUserId = RequireProvider();
+
+        if (!ConnectionToDeviceMap.TryGetValue(Context.ConnectionId, out var deviceId))
+        {
+            throw new HubException("Device not registered.");
+        }
+
+        DeviceNetworkMetrics[deviceId] = new DeviceNetworkMetrics(bandwidthBps, latencyMs, region);
+
+        _logger.LogDebug(
+            "Network metrics updated for device {DeviceId}: {BandwidthMbps} Mbps, {LatencyMs} ms, region={Region}",
+            deviceId,
+            bandwidthBps / 1_000_000.0,
+            latencyMs,
+            region ?? "unknown");
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Checks if all child partitions have received their subgraphs and notifies for execution start.
+    /// </summary>
+    private async Task CheckAndNotifyAllSubgraphsReady(Guid subtaskId, CancellationToken cancellationToken)
+    {
+        var partitions = await _context.Partitions
+            .Where(p => p.SubtaskId == subtaskId)
+            .ToListAsync(cancellationToken);
+
+        // Check if all non-parent partitions have received their subgraphs
+        var childPartitions = partitions.Where(p => !p.IsParentPeer).ToList();
+        var allReady = childPartitions.All(p => p.SubgraphReceiveStatus == SubgraphReceiveStatus.Received && p.Status == PartitionStatus.Ready);
+
+        if (allReady)
+        {
+            _logger.LogInformation("All subgraphs received for subtask {SubtaskId}, ready for execution", subtaskId);
+
+            // Notify all partition devices that subtask is ready to execute
+            foreach (var partition in partitions.Where(p => p.ConnectionId is not null))
+            {
+                await Clients.Client(partition.ConnectionId!).SendAsync(
+                    OnSubtaskPartitionsReadyEvent,
+                    new
+                    {
+                        SubtaskId = subtaskId,
+                        PartitionId = partition.Id,
+                        PartitionIndex = partition.PartitionIndex,
+                        TotalPartitions = partition.TotalPartitions,
+                        IsParentPeer = partition.IsParentPeer,
+                        AllSubgraphsDistributed = true,
+                        TimestampUtc = DateTime.UtcNow
+                    },
+                    cancellationToken);
+            }
+        }
+    }
+
+    #endregion
+
+    #region Partition Helper Methods
+
+    public static string SubtaskGroupName(Guid subtaskId) => $"Subtask_{subtaskId}";
+
+    private static void RegisterPartitionConnection(Guid subtaskId, Guid partitionId, string connectionId)
+    {
+        var subtaskPartitions = SubtaskPartitionConnections.GetOrAdd(subtaskId, _ => new ConcurrentDictionary<Guid, string>());
+        subtaskPartitions[partitionId] = connectionId;
+    }
+
+    private static void UnregisterPartitionConnections(Guid subtaskId)
+    {
+        SubtaskPartitionConnections.TryRemove(subtaskId, out _);
+    }
+
+    private async Task CheckAndNotifySubtaskPartitionsReady(Guid subtaskId, CancellationToken cancellationToken)
+    {
+        var partitions = await _context.Partitions
+            .Where(p => p.SubtaskId == subtaskId)
+            .ToListAsync(cancellationToken);
+
+        // Check if all required connections are established
+        var allConnected = partitions.All(p =>
+        {
+            // First partition doesn't need upstream connection
+            var upstreamOk = p.PartitionIndex == 0 || p.UpstreamConnectionState == WebRtcConnectionState.Connected;
+            // Last partition doesn't need downstream connection
+            var downstreamOk = p.PartitionIndex == p.TotalPartitions - 1 || p.DownstreamConnectionState == WebRtcConnectionState.Connected;
+            return upstreamOk && downstreamOk;
+        });
+
+        if (allConnected)
+        {
+            _logger.LogInformation("All partitions connected for subtask {SubtaskId}, ready for execution", subtaskId);
+
+            // Notify all partition devices that subtask is ready to execute
+            foreach (var partition in partitions.Where(p => p.ConnectionId is not null))
+            {
+                await Clients.Client(partition.ConnectionId!).SendAsync(
+                    OnSubtaskPartitionsReadyEvent,
+                    new
+                    {
+                        SubtaskId = subtaskId,
+                        PartitionId = partition.Id,
+                        PartitionIndex = partition.PartitionIndex,
+                        TotalPartitions = partition.TotalPartitions,
+                        TimestampUtc = DateTime.UtcNow
+                    },
+                    cancellationToken);
+            }
+        }
+    }
+
+    private async Task CheckAndCompleteSubtaskAsync(Guid subtaskId, CancellationToken cancellationToken)
+    {
+        var partitions = await _context.Partitions
+            .Where(p => p.SubtaskId == subtaskId)
+            .ToListAsync(cancellationToken);
+
+        if (partitions.All(p => p.Status == PartitionStatus.Completed))
+        {
+            _logger.LogInformation("All partitions completed for subtask {SubtaskId}", subtaskId);
+
+            var subtask = await _context.Subtasks
+                .Include(s => s.Task)
+                .FirstOrDefaultAsync(s => s.Id == subtaskId, cancellationToken);
+
+            if (subtask is not null && subtask.Status != SubtaskStatus.Completed)
+            {
+                // Get result from last partition
+                var lastPartition = partitions.OrderByDescending(p => p.PartitionIndex).First();
+                
+                var completion = await _assignmentService.CompleteSubtaskAsync(
+                    subtaskId,
+                    subtask.AssignedProviderId ?? "",
+                    "{ \"distributed\": true, \"partitions\": " + partitions.Count + " }",
+                    cancellationToken);
+
+                if (completion is not null)
+                {
+                    await BroadcastCompletionAsync(
+                        Clients,
+                        completion.Subtask,
+                        subtask.AssignedProviderId ?? "",
+                        completion.TaskCompleted,
+                        new { distributed = true, partitions = partitions.Count },
+                        cancellationToken);
+                }
+
+                // Clean up partition connections
+                UnregisterPartitionConnections(subtaskId);
+            }
+        }
+    }
+
+    private async Task FailSubtaskDueToPartitionFailureAsync(Guid subtaskId, Guid failedPartitionId, string failureReason, CancellationToken cancellationToken)
+    {
+        var subtask = await _context.Subtasks
+            .Include(s => s.Task)
+            .FirstOrDefaultAsync(s => s.Id == subtaskId, cancellationToken);
+
+        if (subtask is null || subtask.Status == SubtaskStatus.Failed)
+        {
+            return;
+        }
+
+        // Cancel all other partitions
+        var partitions = await _context.Partitions
+            .Where(p => p.SubtaskId == subtaskId && p.Id != failedPartitionId)
+            .ToListAsync(cancellationToken);
+
+        foreach (var partition in partitions)
+        {
+            if (partition.Status != PartitionStatus.Completed && partition.Status != PartitionStatus.Failed)
+            {
+                partition.Status = PartitionStatus.Cancelled;
+            }
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        // Fail the subtask
+        var failure = await _assignmentService.FailSubtaskAsync(
+            subtaskId,
+            subtask.AssignedProviderId ?? "",
+            $"Partition {failedPartitionId} failed: {failureReason}",
+            cancellationToken);
+
+        if (failure is not null)
+        {
+            await BroadcastFailureAsync(
+                Clients,
+                failure.Subtask,
+                subtask.AssignedProviderId ?? "",
+                failure.WasReassigned,
+                failure.TaskFailed,
+                new { partitionId = failedPartitionId, reason = failureReason },
+                cancellationToken);
+        }
+
+        // Clean up partition connections
+        UnregisterPartitionConnections(subtaskId);
+    }
+
+    /// <summary>
+    /// Gets TURN credentials for WebRTC connections.
+    /// In production, these should be short-lived credentials from a TURN server.
+    /// </summary>
+    public Task<TurnCredentials> GetTurnCredentials()
+    {
+        // TODO: In production, generate short-lived TURN credentials
+        // For now, return placeholder STUN servers
+        return Task.FromResult(new TurnCredentials
+        {
+            Username = "",
+            Credential = "",
+            Urls = new[]
+            {
+                "stun:stun.l.google.com:19302",
+                "stun:stun1.l.google.com:19302"
+            },
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        });
+    }
+
+    #endregion
 
     public static Task OnSubtaskAccepted(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
     {
@@ -850,8 +1939,9 @@ public class TaskHub : Hub
             if (deviceConnections.IsEmpty)
             {
                 DeviceConnections.TryRemove(deviceId, out _);
-                // Also remove hardware capabilities data when device fully disconnects
+                // Also remove hardware capabilities and network metrics data when device fully disconnects
                 DeviceHardwareCapabilities.TryRemove(deviceId, out _);
+                DeviceNetworkMetrics.TryRemove(deviceId, out _);
             }
         }
 

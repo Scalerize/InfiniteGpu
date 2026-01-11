@@ -174,6 +174,10 @@ builder.Services.AddScoped<ApiKeyAuthenticationService>();
 builder.Services.AddHttpClient<MailgunEmailSender>();
 builder.Services.AddTransient<IEmailSender, MailgunEmailSender>();
 
+// Smart Partitioning Services
+builder.Services.AddScoped<SubtaskPartitionManager>();
+builder.Services.AddScoped<DistributedTaskOrchestrator>();
+
 
 var app = builder.Build();
 

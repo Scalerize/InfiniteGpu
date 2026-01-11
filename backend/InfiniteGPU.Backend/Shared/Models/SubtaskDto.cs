@@ -29,6 +29,15 @@ public sealed class SubtaskDto
     public ExecutionStateDto? ExecutionState { get; init; }
 
     public PartitionDto? Partition { get; init; }
+    
+    // Smart partitioning support for distributed execution
+    public bool RequiresPartitioning { get; init; }
+    
+    public int PartitionCount { get; init; }
+    
+    public IReadOnlyList<SmartPartitionDto> Partitions { get; init; } = Array.Empty<SmartPartitionDto>();
+    
+    public SmartPartitionSummaryDto? PartitionSummary { get; init; }
 
     public decimal? EstimatedEarnings { get; init; }
 
@@ -202,5 +211,81 @@ public sealed class SubtaskDto
         public int NetworkGb { get; init; }
 
         public decimal DataSizeGb { get; init; }
+    }
+    
+    /// <summary>
+    /// Smart partitioning support for distributed ONNX model execution across multiple devices.
+    /// </summary>
+    public sealed class SmartPartitionDto
+    {
+        public Guid Id { get; init; }
+        
+        public Guid SubtaskId { get; init; }
+        
+        public int PartitionIndex { get; init; }
+        
+        public string OnnxSubgraphBlobUri { get; init; } = string.Empty;
+        
+        public IReadOnlyList<string> InputTensorNames { get; init; } = Array.Empty<string>();
+        
+        public IReadOnlyList<string> OutputTensorNames { get; init; } = Array.Empty<string>();
+        
+        public PartitionStatus Status { get; init; }
+        
+        public int Progress { get; init; }
+        
+        public Guid? AssignedDeviceId { get; init; }
+        
+        public string? AssignedDeviceConnectionId { get; init; }
+        
+        public string? AssignedToUserId { get; init; }
+        
+        public DateTime CreatedAtUtc { get; init; }
+        
+        public DateTime? AssignedAtUtc { get; init; }
+        
+        public DateTime? StartedAtUtc { get; init; }
+        
+        public DateTime? CompletedAtUtc { get; init; }
+        
+        public DateTime? FailedAtUtc { get; init; }
+        
+        public string? FailureReason { get; init; }
+        
+        public long EstimatedMemoryMb { get; init; }
+        
+        public double EstimatedComputeTflops { get; init; }
+        
+        public WebRtcConnectionState UpstreamConnectionState { get; init; }
+        
+        public WebRtcConnectionState DownstreamConnectionState { get; init; }
+        
+        public Guid? UpstreamPartitionId { get; init; }
+        
+        public Guid? DownstreamPartitionId { get; init; }
+        
+        public long TensorsBytesReceived { get; init; }
+        
+        public long TensorsBytesSent { get; init; }
+        
+        public double? ExecutionDurationMs { get; init; }
+    }
+    
+    /// <summary>
+    /// Summary of partition execution status for a subtask.
+    /// </summary>
+    public sealed class SmartPartitionSummaryDto
+    {
+        public int TotalPartitions { get; init; }
+        
+        public int CompletedPartitions { get; init; }
+        
+        public int FailedPartitions { get; init; }
+        
+        public int ExecutingPartitions { get; init; }
+        
+        public double AverageProgress { get; init; }
+        
+        public bool IsDistributed { get; init; }
     }
 }

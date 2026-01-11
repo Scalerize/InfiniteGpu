@@ -21,6 +21,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ApiKey> ApiKeys { get; set; } = null!;
     public DbSet<SubtaskTimelineEvent> SubtaskTimelineEvents { get; set; } = null!;
     public DbSet<ProviderModelCache> ProviderModelCaches { get; set; } = null!;
+    public DbSet<Partition> Partitions { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -310,6 +311,70 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .WithMany()
                 .HasForeignKey(e => e.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<Partition>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.SubtaskId);
+            entity.HasIndex(e => e.DeviceId);
+            entity.HasIndex(e => e.AssignedProviderId);
+            entity.HasIndex(e => e.Status);
+            entity.HasIndex(e => e.PartitionIndex);
+            entity.HasIndex(e => new { e.SubtaskId, e.PartitionIndex }).IsUnique();
+
+            entity.Property(e => e.AssignedProviderId)
+                .HasMaxLength(450);
+            entity.Property(e => e.OnnxSubgraphBlobUri)
+                .HasMaxLength(2048);
+            entity.Property(e => e.InputTensorNamesJson)
+                .HasColumnType("nvarchar(max)");
+            entity.Property(e => e.OutputTensorNamesJson)
+                .HasColumnType("nvarchar(max)");
+            entity.Property(e => e.ExecutionConfigJson)
+                .HasColumnType("nvarchar(max)");
+            entity.Property(e => e.ConnectionId)
+                .HasMaxLength(128);
+            entity.Property(e => e.FailureReason)
+                .HasMaxLength(2048);
+            entity.Property(e => e.CreatedAtUtc)
+                .HasColumnType("datetime2")
+                .HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.AssignedAtUtc)
+                .HasColumnType("datetime2");
+            entity.Property(e => e.ConnectedAtUtc)
+                .HasColumnType("datetime2");
+            entity.Property(e => e.StartedAtUtc)
+                .HasColumnType("datetime2");
+            entity.Property(e => e.CompletedAtUtc)
+                .HasColumnType("datetime2");
+            entity.Property(e => e.LastHeartbeatAtUtc)
+                .HasColumnType("datetime2");
+            entity.Property(e => e.FailedAtUtc)
+                .HasColumnType("datetime2");
+            entity.Property(e => e.RowVersion)
+                .IsRowVersion();
+
+            entity.HasOne(e => e.Subtask)
+                .WithMany(s => s.Partitions)
+                .HasForeignKey(e => e.SubtaskId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(e => e.Device)
+                .WithMany()
+                .HasForeignKey(e => e.DeviceId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.AssignedProvider)
+                .WithMany()
+                .HasForeignKey(e => e.AssignedProviderId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(e => e.UpstreamPartition)
+                .WithOne()
+                .HasForeignKey<Partition>(e => e.UpstreamPartitionId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne(e => e.DownstreamPartition)
+                .WithOne()
+                .HasForeignKey<Partition>(e => e.DownstreamPartitionId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
     }
 }

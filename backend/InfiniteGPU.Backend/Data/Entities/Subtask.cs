@@ -105,4 +105,21 @@ public class Subtask
     public virtual ICollection<Earning> Earnings { get; set; } = new List<Earning>();
 
     public virtual ICollection<Withdrawal> Withdrawals { get; set; } = new List<Withdrawal>();
+
+    /// <summary>
+    /// Partitions for distributed execution. If empty, subtask runs on a single device.
+    /// </summary>
+    public virtual ICollection<Partition> Partitions { get; set; } = new List<Partition>();
+
+    /// <summary>
+    /// Whether this subtask requires partitioning for distributed execution.
+    /// </summary>
+    public bool RequiresPartitioning { get; set; }
+
+    /// <summary>
+    /// Total number of partitions (computed from Partitions collection).
+    /// Returns 0 or 1 for single device execution.
+    /// </summary>
+    [NotMapped]
+    public int PartitionCount => Partitions?.Count ?? 0;
 }

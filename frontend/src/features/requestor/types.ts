@@ -125,6 +125,34 @@ export const SubtaskStatus = {
 } as const;
 export type SubtaskStatus = (typeof SubtaskStatus)[keyof typeof SubtaskStatus];
 
+// Partition status for smart partitioning feature
+export const PartitionStatus = {
+  Pending: 'Pending',
+  Assigned: 'Assigned',
+  Connecting: 'Connecting',
+  WaitingForInput: 'WaitingForInput',
+  Executing: 'Executing',
+  StreamingOutput: 'StreamingOutput',
+  Completed: 'Completed',
+  Failed: 'Failed',
+  Cancelled: 'Cancelled'
+} as const;
+export type PartitionStatus = (typeof PartitionStatus)[keyof typeof PartitionStatus];
+
+// WebRTC connection state for partition peers
+export const WebRtcConnectionState = {
+  None: 'None',
+  OfferSent: 'OfferSent',
+  OfferReceived: 'OfferReceived',
+  AnswerSent: 'AnswerSent',
+  IceNegotiating: 'IceNegotiating',
+  Connected: 'Connected',
+  Reconnecting: 'Reconnecting',
+  Closed: 'Closed',
+  Failed: 'Failed'
+} as const;
+export type WebRtcConnectionState = (typeof WebRtcConnectionState)[keyof typeof WebRtcConnectionState];
+
 export interface SubtaskTimelineEventDto {
   id: string;
   eventType: string;
@@ -148,6 +176,67 @@ export interface OutputArtifactDto {
   payload?: string | null;
 }
 
+// Partition peer information for WebRTC coordination
+export interface PartitionPeerInfoDto {
+  partitionId: string;
+  deviceId: string;
+  connectionId: string;
+  partitionIndex: number;
+  isInitiator: boolean;
+}
+
+// Partition data transfer object for distributed execution
+export interface PartitionDto {
+  id: string;
+  subtaskId: string;
+  partitionIndex: number;
+  onnxSubgraphBlobUri: string;
+  inputTensorNames: string[];
+  outputTensorNames: string[];
+  status: PartitionStatus;
+  progress: number;
+  
+  // Device assignment
+  assignedDeviceId?: string | null;
+  assignedDeviceConnectionId?: string | null;
+  assignedToUserId?: string | null;
+  
+  // Timing
+  createdAtUtc: string;
+  assignedAtUtc?: string | null;
+  startedAtUtc?: string | null;
+  completedAtUtc?: string | null;
+  failedAtUtc?: string | null;
+  failureReason?: string | null;
+  
+  // Resource estimates
+  estimatedMemoryMb: number;
+  estimatedComputeTflops: number;
+  
+  // WebRTC connection states
+  upstreamConnectionState: WebRtcConnectionState;
+  downstreamConnectionState: WebRtcConnectionState;
+  
+  // Pipeline links
+  upstreamPartitionId?: string | null;
+  downstreamPartitionId?: string | null;
+  
+  // Metrics
+  tensorsBytesReceived: number;
+  tensorsBytesSent: number;
+  executionDurationMs?: number | null;
+}
+
+// Summary view for partition status in subtask list
+export interface PartitionSummary {
+  totalPartitions: number;
+  completedPartitions: number;
+  failedPartitions: number;
+  executingPartitions: number;
+  averageProgress: number;
+  isDistributed: boolean;
+}
+
 export interface SubtaskDto {
   id: string;
   taskId: string;
@@ -165,4 +254,10 @@ export interface SubtaskDto {
   timeline: Array<SubtaskTimelineEventDto>;
   inputArtifacts: Array<InputArtifactDto>;
   outputArtifacts: Array<OutputArtifactDto>;
+  
+  // Smart partitioning support
+  requiresPartitioning?: boolean;
+  partitionCount?: number;
+  partitions?: Array<PartitionDto>;
+  partitionSummary?: PartitionSummary;
 }
