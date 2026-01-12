@@ -976,6 +976,12 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         public WebRtcPeerInfo? UpstreamPeer { get; init; }
         public WebRtcPeerInfo? DownstreamPeer { get; init; }
         
+        /// <summary>
+        /// JSON parameters containing input tensor bindings for the first partition.
+        /// Used by InputParsingService to build NamedOnnxValue inputs.
+        /// </summary>
+        public string? ParametersJson { get; init; }
+        
         // Parent peer architecture fields
         /// <summary>
         /// True if this device is the parent peer responsible for downloading

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using Scalerize.InfiniteGpu.Desktop.Constants;
 using System;
 using System.Collections.Concurrent;
@@ -434,6 +435,43 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
             var connection = await WaitForActiveConnectionAsync(cancellationToken);
 
+            // Check if this subtask requires distributed partitioning
+            if (subtask.RequiresPartitioning && subtask.PartitionCount > 1)
+            {
+                Debug.WriteLine($"[BackgroundWorkService] Subtask {subtask.Id} requires partitioning ({subtask.PartitionCount} partitions)");
+                
+                // Route to distributed partition execution
+                await ProcessDistributedExecutionRequestAsync(payload, connection, cancellationToken);
+                return;
+            }
+            
+            // If we have a partition assignment directly included, use it
+            if (subtask.MyPartition is not null)
+            {
+                Debug.WriteLine($"[BackgroundWorkService] Subtask {subtask.Id} has direct partition assignment: partition {subtask.MyPartition.PartitionId}");
+                
+                var assignment = ConvertToPartitionAssignment(subtask.MyPartition, subtask);
+                
+                // Initialize input buffer and store assignment
+                _partitionInputBuffers[assignment.PartitionId] = new Dictionary<string, ReceivedTensor>();
+                _activeAssignments[assignment.PartitionId] = assignment;
+                
+                if (assignment.IsParentPeer)
+                {
+                    // Parent peer: download full model, partition it, distribute subgraphs
+                    await ProcessParentPeerAssignmentAsync(assignment, cancellationToken);
+                }
+                else
+                {
+                    // Child peer: wait for subgraph from parent, this will be handled via WebRTC events
+                    Debug.WriteLine($"[BackgroundWorkService] Partition {assignment.PartitionId} waiting for subgraph from parent peer");
+                }
+                return;
+            }
+
+            // Standard single-device execution (no partitioning)
+            Debug.WriteLine($"[BackgroundWorkService] Subtask {subtask.Id} executing as single-device workload (no partitioning)");
+            
             await connection.InvokeAsync("AcknowledgeExecutionStart", subtask.Id, cancellationToken);
             await connection.InvokeAsync("ReportProgress", subtask.Id, 5, cancellationToken);
 
@@ -529,6 +567,175 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     Debug.WriteLine($"[BackgroundWorkService] Failed to submit error payload: {submitEx}");
                 }
             }
+        }
+        
+        /// <summary>
+        /// Handles distributed execution when a subtask requires partitioning across multiple devices.
+        /// This device becomes the parent peer responsible for coordinating the distributed execution.
+        /// </summary>
+        private async Task ProcessDistributedExecutionRequestAsync(
+            ExecutionRequestedPayload payload,
+            HubConnection connection,
+            CancellationToken cancellationToken)
+        {
+            var subtask = payload.Subtask;
+            
+            Debug.WriteLine($"[BackgroundWorkService] Starting distributed execution for subtask {subtask.Id}");
+            
+            await connection.InvokeAsync("AcknowledgeExecutionStart", subtask.Id, cancellationToken);
+            await connection.InvokeAsync("ReportProgress", subtask.Id, 5, cancellationToken);
+            
+            try
+            {
+                // Find this device's partition assignment from the partitions list
+                if (subtask.Partitions is null || subtask.Partitions.Count == 0)
+                {
+                    Debug.WriteLine($"[BackgroundWorkService] No partition assignments in subtask {subtask.Id}, waiting for OnPartitionAssigned event from backend");
+                    // The backend will send partition assignments via OnPartitionAssigned SignalR event
+                    // when it has determined which devices should handle which partitions.
+                    // This is the expected flow - the backend orchestrates partition assignment.
+                    return;
+                }
+                
+                // Check if we're already assigned as parent peer via the included partitions
+                var myPartition = subtask.Partitions.FirstOrDefault(p => p.IsParentPeer);
+                if (myPartition is not null)
+                {
+                    Debug.WriteLine($"[BackgroundWorkService] This device is the parent peer for subtask {subtask.Id}");
+                    
+                    // Build PartitionAssignment from SmartPartitionPayload
+                    var assignment = new PartitionAssignment
+                    {
+                        PartitionId = myPartition.Id,
+                        SubtaskId = subtask.Id,
+                        TaskId = subtask.TaskId,
+                        PartitionIndex = myPartition.PartitionIndex,
+                        TotalPartitions = subtask.PartitionCount,
+                        OnnxSubgraphBlobUri = myPartition.OnnxSubgraphBlobUri,
+                        InputTensorNames = myPartition.InputTensorNames,
+                        OutputTensorNames = myPartition.OutputTensorNames,
+                        IsParentPeer = true,
+                        OnnxFullModelBlobUri = myPartition.OnnxFullModelBlobUri,
+                        ParametersJson = subtask.ParametersJson,
+                        // Child peers will be populated from the subtask partitions list
+                        ChildPeers = BuildChildPeersFromPartitions(subtask.Partitions, myPartition.PartitionIndex)
+                    };
+                    
+                    // Initialize tracking
+                    _partitionInputBuffers[assignment.PartitionId] = new Dictionary<string, ReceivedTensor>();
+                    _activeAssignments[assignment.PartitionId] = assignment;
+                    
+                    // Parent peer workflow
+                    await ProcessParentPeerAssignmentAsync(assignment, cancellationToken);
+                }
+                else
+                {
+                    // Not the parent peer - wait for partition assignment event
+                    Debug.WriteLine($"[BackgroundWorkService] This device is not the parent peer for subtask {subtask.Id}, waiting for partition assignment");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[BackgroundWorkService] Distributed execution setup failed for subtask {subtask.Id}: {ex}");
+                
+                var errorPayload = new
+                {
+                    subtaskId = subtask.Id,
+                    failedAtUtc = DateTimeOffset.UtcNow,
+                    error = $"Distributed execution setup failed: {ex.Message}"
+                };
+
+                var errorJson = JsonSerializer.Serialize(errorPayload, SerializerOptions);
+
+                try
+                {
+                    await connection.InvokeAsync("FailedResult", subtask.Id, errorJson, cancellationToken);
+                }
+                catch (Exception submitEx)
+                {
+                    Debug.WriteLine($"[BackgroundWorkService] Failed to submit error payload: {submitEx}");
+                }
+            }
+        }
+        
+        /// <summary>
+        /// Builds WebRtcPeerInfo list for child peers from partition list.
+        /// </summary>
+        private static List<WebRtcPeerInfo>? BuildChildPeersFromPartitions(
+            List<SmartPartitionPayload>? partitions,
+            int parentPartitionIndex)
+        {
+            if (partitions is null || partitions.Count == 0)
+            {
+                return null;
+            }
+            
+            return partitions
+                .Where(p => p.PartitionIndex != parentPartitionIndex && !p.IsParentPeer)
+                .Select(p => new WebRtcPeerInfo
+                {
+                    PartitionId = p.Id,
+                    DeviceId = p.AssignedDeviceId ?? Guid.Empty,
+                    DeviceConnectionId = p.AssignedDeviceConnectionId ?? string.Empty,
+                    PartitionIndex = p.PartitionIndex,
+                    IsInitiator = true // Parent initiates connections to children
+                })
+                .ToList();
+        }
+        
+        /// <summary>
+        /// Converts a PartitionAssignmentPayload to a PartitionAssignment.
+        /// </summary>
+        private PartitionAssignment ConvertToPartitionAssignment(
+            PartitionAssignmentPayload payload,
+            SubtaskPayload subtask)
+        {
+            return new PartitionAssignment
+            {
+                PartitionId = payload.PartitionId,
+                SubtaskId = payload.SubtaskId,
+                TaskId = payload.TaskId,
+                PartitionIndex = payload.PartitionIndex,
+                TotalPartitions = payload.TotalPartitions,
+                OnnxSubgraphBlobUri = payload.OnnxSubgraphBlobUri ?? string.Empty,
+                InputTensorNames = payload.InputTensorNames,
+                OutputTensorNames = payload.OutputTensorNames,
+                ParametersJson = payload.ParametersJson ?? subtask.ParametersJson,
+                IsParentPeer = payload.IsParentPeer,
+                OnnxFullModelBlobUri = payload.OnnxFullModelBlobUri,
+                UpstreamPeer = payload.UpstreamPeer is not null ? new WebRtcPeerInfo
+                {
+                    PartitionId = payload.UpstreamPeer.PartitionId,
+                    DeviceId = payload.UpstreamPeer.DeviceId,
+                    DeviceConnectionId = payload.UpstreamPeer.DeviceConnectionId,
+                    PartitionIndex = payload.UpstreamPeer.PartitionIndex,
+                    IsInitiator = payload.UpstreamPeer.IsInitiator
+                } : null,
+                DownstreamPeer = payload.DownstreamPeer is not null ? new WebRtcPeerInfo
+                {
+                    PartitionId = payload.DownstreamPeer.PartitionId,
+                    DeviceId = payload.DownstreamPeer.DeviceId,
+                    DeviceConnectionId = payload.DownstreamPeer.DeviceConnectionId,
+                    PartitionIndex = payload.DownstreamPeer.PartitionIndex,
+                    IsInitiator = payload.DownstreamPeer.IsInitiator
+                } : null,
+                ParentPeer = payload.ParentPeer is not null ? new WebRtcPeerInfo
+                {
+                    PartitionId = payload.ParentPeer.PartitionId,
+                    DeviceId = payload.ParentPeer.DeviceId,
+                    DeviceConnectionId = payload.ParentPeer.DeviceConnectionId,
+                    PartitionIndex = payload.ParentPeer.PartitionIndex,
+                    IsInitiator = payload.ParentPeer.IsInitiator
+                } : null,
+                ChildPeers = payload.ChildPeers?.Select(c => new WebRtcPeerInfo
+                {
+                    PartitionId = c.PartitionId,
+                    DeviceId = c.DeviceId,
+                    DeviceConnectionId = c.DeviceConnectionId,
+                    PartitionIndex = c.PartitionIndex,
+                    IsInitiator = c.IsInitiator
+                }).ToList()
+            };
         }
 
         private async Task<HubConnection> WaitForActiveConnectionAsync(CancellationToken cancellationToken)
@@ -709,6 +916,16 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             public ExecutionSpecPayload? ExecutionSpec { get; init; }
             public ExecutionStatePayload? ExecutionState { get; init; }
             public OnnxModelPayload? OnnxModel { get; init; }
+            
+            // Smart partitioning support
+            public bool RequiresPartitioning { get; init; }
+            public int PartitionCount { get; init; }
+            public List<SmartPartitionPayload>? Partitions { get; init; }
+            
+            /// <summary>
+            /// Information about this device's partition assignment when RequiresPartitioning is true.
+            /// </summary>
+            public PartitionAssignmentPayload? MyPartition { get; init; }
         }
 
         private sealed class ExecutionSpecPayload
@@ -729,6 +946,77 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         {
             public string? ResolvedReadUri { get; init; }
             public string? ReadUri { get; init; }
+        }
+        
+        /// <summary>
+        /// Represents a smart partition from the backend SubtaskDto.
+        /// </summary>
+        private sealed class SmartPartitionPayload
+        {
+            public Guid Id { get; init; }
+            public Guid SubtaskId { get; init; }
+            public int PartitionIndex { get; init; }
+            public string OnnxSubgraphBlobUri { get; init; } = string.Empty;
+            public List<string> InputTensorNames { get; init; } = new();
+            public List<string> OutputTensorNames { get; init; } = new();
+            public string Status { get; init; } = string.Empty;
+            public int Progress { get; init; }
+            public Guid? AssignedDeviceId { get; init; }
+            public string? AssignedDeviceConnectionId { get; init; }
+            public string? AssignedToUserId { get; init; }
+            public DateTime CreatedAtUtc { get; init; }
+            public DateTime? AssignedAtUtc { get; init; }
+            public DateTime? StartedAtUtc { get; init; }
+            public DateTime? CompletedAtUtc { get; init; }
+            public DateTime? FailedAtUtc { get; init; }
+            public string? FailureReason { get; init; }
+            public long EstimatedMemoryMb { get; init; }
+            public double EstimatedComputeTflops { get; init; }
+            public Guid? UpstreamPartitionId { get; init; }
+            public Guid? DownstreamPartitionId { get; init; }
+            
+            // Parent peer fields
+            public bool IsParentPeer { get; init; }
+            public string? OnnxFullModelBlobUri { get; init; }
+        }
+        
+        /// <summary>
+        /// Information about this device's specific partition assignment.
+        /// Sent by backend when this device is assigned to execute a partition.
+        /// </summary>
+        private sealed class PartitionAssignmentPayload
+        {
+            public Guid PartitionId { get; init; }
+            public Guid SubtaskId { get; init; }
+            public Guid TaskId { get; init; }
+            public int PartitionIndex { get; init; }
+            public int TotalPartitions { get; init; }
+            public string? OnnxSubgraphBlobUri { get; init; }
+            public List<string> InputTensorNames { get; init; } = new();
+            public List<string> OutputTensorNames { get; init; } = new();
+            public string? ParametersJson { get; init; }
+            
+            // Parent peer architecture
+            public bool IsParentPeer { get; init; }
+            public string? OnnxFullModelBlobUri { get; init; }
+            
+            // Peer connection info
+            public WebRtcPeerInfoPayload? UpstreamPeer { get; init; }
+            public WebRtcPeerInfoPayload? DownstreamPeer { get; init; }
+            public WebRtcPeerInfoPayload? ParentPeer { get; init; }
+            public List<WebRtcPeerInfoPayload>? ChildPeers { get; init; }
+        }
+        
+        /// <summary>
+        /// WebRTC peer info from backend.
+        /// </summary>
+        private sealed class WebRtcPeerInfoPayload
+        {
+            public Guid PartitionId { get; init; }
+            public Guid DeviceId { get; init; }
+            public string DeviceConnectionId { get; init; } = string.Empty;
+            public int PartitionIndex { get; init; }
+            public bool IsInitiator { get; init; }
         }
 
         #region Partition Execution
@@ -1060,34 +1348,38 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 
                 await _webRtcPeerService.ReportPartitionProgressAsync(assignment.SubtaskId, assignment.PartitionId, 20, cancellationToken);
 
-                // Build inputs
-                Dictionary<string, OnnxInput> inputs;
+                // Build inputs as NamedOnnxValue list
+                List<NamedOnnxValue> inputs;
                 
                 if (assignment.PartitionIndex == 0)
                 {
-                    // First partition: get inputs from task parameters
-                    // For now, use empty inputs - real implementation would get from subtask parameters
-                    inputs = new Dictionary<string, OnnxInput>();
-                    foreach (var inputName in assignment.InputTensorNames)
+                    // First partition: get inputs from task parameters using InputParsingService
+                    if (!string.IsNullOrEmpty(assignment.ParametersJson))
                     {
-                        // In a real implementation, we'd get the actual input data
-                        Debug.WriteLine($"[BackgroundWorkService] Partition {assignment.PartitionId} expecting input: {inputName}");
+                        inputs = await _inputParsingService.BuildNamedInputsAsync(assignment.ParametersJson, cancellationToken);
+                        Debug.WriteLine($"[BackgroundWorkService] Partition {assignment.PartitionId} loaded {inputs.Count} inputs from ParametersJson");
+                    }
+                    else
+                    {
+                        // Fallback: create empty list if no parameters available
+                        inputs = new List<NamedOnnxValue>();
+                        Debug.WriteLine($"[BackgroundWorkService] Partition {assignment.PartitionId} has no ParametersJson, using empty inputs");
                     }
                 }
                 else
                 {
-                    // Subsequent partitions: get inputs from received tensors
-                    inputs = new Dictionary<string, OnnxInput>();
+                    // Subsequent partitions: convert received tensors to NamedOnnxValue
+                    inputs = new List<NamedOnnxValue>();
                     if (item.InputTensors is not null)
                     {
                         foreach (var kvp in item.InputTensors)
                         {
-                            inputs[kvp.Key] = new OnnxInput
+                            var namedValue = ConvertReceivedTensorToNamedOnnxValue(kvp.Value);
+                            if (namedValue is not null)
                             {
-                                Name = kvp.Key,
-                                Data = kvp.Value.Data,
-                                Shape = kvp.Value.Shape
-                            };
+                                inputs.Add(namedValue);
+                                Debug.WriteLine($"[BackgroundWorkService] Partition {assignment.PartitionId} received input tensor: {kvp.Key}");
+                            }
                         }
                     }
                 }
@@ -1108,20 +1400,23 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         if (assignment.OutputTensorNames.Contains(output.Name))
                         {
                             var dataType = MapToTensorDataType(output.ElementType);
+                            var dataBytes = ConvertOutputDataToBytes(output.Data, output.ElementType);
+                            var shape = output.Dimensions ?? Array.Empty<int>();
+                            
                             await _webRtcPeerService.SendTensorAsync(
                                 assignment.SubtaskId,
                                 assignment.PartitionId,
                                 assignment.DownstreamPeer.PartitionId,
                                 output.Name,
                                 dataType,
-                                output.Shape,
-                                output.Data,
+                                shape,
+                                dataBytes,
                                 cancellationToken);
                         }
                     }
 
                     // Report partition ready (intermediate partition)
-                    var totalOutputSize = inferenceResult.Outputs.Sum(o => o.Data.Length);
+                    var totalOutputSize = inferenceResult.Outputs.Sum(o => GetOutputDataSize(o.Data, o.ElementType));
                     await _webRtcPeerService.ReportPartitionReadyAsync(
                         assignment.SubtaskId,
                         assignment.PartitionId,
@@ -1147,8 +1442,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         outputs = inferenceResult.Outputs.Select(o => new
                         {
                             name = o.Name,
-                            shape = o.Shape,
-                            sizeBytes = o.Data.Length
+                            shape = o.Dimensions,
+                            sizeBytes = GetOutputDataSize(o.Data, o.ElementType)
                         }).ToList()
                     };
 
@@ -1174,30 +1469,200 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             }
         }
 
-        private static TensorSerializer.TensorDataType MapToTensorDataType(Type elementType)
+        /// <summary>
+        /// Maps ONNX element type string to TensorSerializer data type.
+        /// </summary>
+        private static TensorSerializer.TensorDataType MapToTensorDataType(string elementType)
         {
-            return elementType.Name switch
+            return elementType.ToUpperInvariant() switch
             {
-                "Single" => TensorSerializer.TensorDataType.Float32,
-                "Half" => TensorSerializer.TensorDataType.Float16,
-                "Double" => TensorSerializer.TensorDataType.Float64,
-                "Int32" => TensorSerializer.TensorDataType.Int32,
-                "Int64" => TensorSerializer.TensorDataType.Int64,
-                "Int16" => TensorSerializer.TensorDataType.Int16,
-                "SByte" => TensorSerializer.TensorDataType.Int8,
-                "Byte" => TensorSerializer.TensorDataType.UInt8,
-                "UInt32" => TensorSerializer.TensorDataType.UInt32,
-                "UInt64" => TensorSerializer.TensorDataType.UInt64,
-                "Boolean" => TensorSerializer.TensorDataType.Bool,
+                "FLOAT" or "SINGLE" => TensorSerializer.TensorDataType.Float32,
+                "FLOAT16" or "HALF" => TensorSerializer.TensorDataType.Float16,
+                "DOUBLE" => TensorSerializer.TensorDataType.Float64,
+                "INT32" => TensorSerializer.TensorDataType.Int32,
+                "INT64" => TensorSerializer.TensorDataType.Int64,
+                "INT16" => TensorSerializer.TensorDataType.Int16,
+                "INT8" or "SBYTE" => TensorSerializer.TensorDataType.Int8,
+                "UINT8" or "BYTE" => TensorSerializer.TensorDataType.UInt8,
+                "UINT32" => TensorSerializer.TensorDataType.UInt32,
+                "UINT64" => TensorSerializer.TensorDataType.UInt64,
+                "BOOL" or "BOOLEAN" => TensorSerializer.TensorDataType.Bool,
                 _ => TensorSerializer.TensorDataType.Float32
             };
         }
 
-        private sealed class OnnxInput
+        /// <summary>
+        /// Converts a received tensor (from WebRTC) to a NamedOnnxValue for ONNX Runtime.
+        /// </summary>
+        private static NamedOnnxValue? ConvertReceivedTensorToNamedOnnxValue(ReceivedTensor tensor)
         {
-            public string Name { get; init; } = string.Empty;
-            public byte[] Data { get; init; } = Array.Empty<byte>();
-            public int[] Shape { get; init; } = Array.Empty<int>();
+            if (tensor.Data is null || tensor.Data.Length == 0 || tensor.Shape is null || tensor.Shape.Length == 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return tensor.DataType switch
+                {
+                    TensorSerializer.TensorDataType.Float32 => CreateFloat32Tensor(tensor),
+                    TensorSerializer.TensorDataType.Float64 => CreateFloat64Tensor(tensor),
+                    TensorSerializer.TensorDataType.Int32 => CreateInt32Tensor(tensor),
+                    TensorSerializer.TensorDataType.Int64 => CreateInt64Tensor(tensor),
+                    TensorSerializer.TensorDataType.Int16 => CreateInt16Tensor(tensor),
+                    TensorSerializer.TensorDataType.Int8 => CreateInt8Tensor(tensor),
+                    TensorSerializer.TensorDataType.UInt8 => CreateUInt8Tensor(tensor),
+                    TensorSerializer.TensorDataType.UInt32 => CreateUInt32Tensor(tensor),
+                    TensorSerializer.TensorDataType.UInt64 => CreateUInt64Tensor(tensor),
+                    TensorSerializer.TensorDataType.Bool => CreateBoolTensor(tensor),
+                    _ => CreateFloat32Tensor(tensor) // Default to float32
+                };
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[BackgroundWorkService] Failed to convert received tensor '{tensor.Name}': {ex}");
+                return null;
+            }
+        }
+
+        private static NamedOnnxValue CreateFloat32Tensor(ReceivedTensor tensor)
+        {
+            var data = new float[tensor.Data.Length / sizeof(float)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<float>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateFloat64Tensor(ReceivedTensor tensor)
+        {
+            var data = new double[tensor.Data.Length / sizeof(double)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<double>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateInt32Tensor(ReceivedTensor tensor)
+        {
+            var data = new int[tensor.Data.Length / sizeof(int)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<int>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateInt64Tensor(ReceivedTensor tensor)
+        {
+            var data = new long[tensor.Data.Length / sizeof(long)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<long>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateInt16Tensor(ReceivedTensor tensor)
+        {
+            var data = new short[tensor.Data.Length / sizeof(short)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<short>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateInt8Tensor(ReceivedTensor tensor)
+        {
+            var data = new sbyte[tensor.Data.Length];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<sbyte>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateUInt8Tensor(ReceivedTensor tensor)
+        {
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<byte>(tensor.Data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateUInt32Tensor(ReceivedTensor tensor)
+        {
+            var data = new uint[tensor.Data.Length / sizeof(uint)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<uint>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateUInt64Tensor(ReceivedTensor tensor)
+        {
+            var data = new ulong[tensor.Data.Length / sizeof(ulong)];
+            Buffer.BlockCopy(tensor.Data, 0, data, 0, tensor.Data.Length);
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<ulong>(data, tensor.Shape));
+        }
+
+        private static NamedOnnxValue CreateBoolTensor(ReceivedTensor tensor)
+        {
+            var data = new bool[tensor.Data.Length];
+            for (int i = 0; i < tensor.Data.Length; i++)
+            {
+                data[i] = tensor.Data[i] != 0;
+            }
+            return NamedOnnxValue.CreateFromTensor(tensor.Name, new DenseTensor<bool>(data, tensor.Shape));
+        }
+
+        /// <summary>
+        /// Converts output data to byte array for tensor transfer.
+        /// </summary>
+        private static byte[] ConvertOutputDataToBytes(object? data, string elementType)
+        {
+            if (data is null)
+            {
+                return Array.Empty<byte>();
+            }
+
+            return data switch
+            {
+                float[] floatArray => ConvertToBytes(floatArray),
+                double[] doubleArray => ConvertToBytes(doubleArray),
+                int[] intArray => ConvertToBytes(intArray),
+                long[] longArray => ConvertToBytes(longArray),
+                short[] shortArray => ConvertToBytes(shortArray),
+                sbyte[] sbyteArray => ConvertToBytes(sbyteArray),
+                byte[] byteArray => byteArray,
+                uint[] uintArray => ConvertToBytes(uintArray),
+                ulong[] ulongArray => ConvertToBytes(ulongArray),
+                bool[] boolArray => ConvertBoolsToBytes(boolArray),
+                _ => Array.Empty<byte>()
+            };
+        }
+
+        private static byte[] ConvertToBytes<T>(T[] data) where T : struct
+        {
+            var bytes = new byte[data.Length * System.Runtime.InteropServices.Marshal.SizeOf<T>()];
+            Buffer.BlockCopy(data, 0, bytes, 0, bytes.Length);
+            return bytes;
+        }
+
+        private static byte[] ConvertBoolsToBytes(bool[] data)
+        {
+            var bytes = new byte[data.Length];
+            for (int i = 0; i < data.Length; i++)
+            {
+                bytes[i] = data[i] ? (byte)1 : (byte)0;
+            }
+            return bytes;
+        }
+
+        /// <summary>
+        /// Gets the byte size of output data.
+        /// </summary>
+        private static int GetOutputDataSize(object? data, string elementType)
+        {
+            if (data is null)
+            {
+                return 0;
+            }
+
+            return data switch
+            {
+                float[] arr => arr.Length * sizeof(float),
+                double[] arr => arr.Length * sizeof(double),
+                int[] arr => arr.Length * sizeof(int),
+                long[] arr => arr.Length * sizeof(long),
+                short[] arr => arr.Length * sizeof(short),
+                sbyte[] arr => arr.Length,
+                byte[] arr => arr.Length,
+                uint[] arr => arr.Length * sizeof(uint),
+                ulong[] arr => arr.Length * sizeof(ulong),
+                bool[] arr => arr.Length,
+                _ => 0
+            };
         }
 
         #endregion
