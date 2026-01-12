@@ -240,42 +240,6 @@ public interface ITaskHubServer
 
     #endregion
 
-    #region Relay Methods (SignalR fallback when WebRTC not available)
-
-    /// <summary>
-    /// Relays subgraph metadata to target partition when WebRTC data channel is not established.
-    /// </summary>
-    /// <param name="subtaskId">ID of the subtask.</param>
-    /// <param name="fromPartitionId">Source partition ID.</param>
-    /// <param name="toPartitionId">Target partition ID.</param>
-    /// <param name="metadataBase64">Base64-encoded subgraph metadata.</param>
-    Task RelaySubgraphMetadata(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string metadataBase64);
-
-    /// <summary>
-    /// Relays a subgraph chunk to target partition when WebRTC data channel is not established.
-    /// </summary>
-    /// <param name="subtaskId">ID of the subtask.</param>
-    /// <param name="fromPartitionId">Source partition ID.</param>
-    /// <param name="toPartitionId">Target partition ID.</param>
-    /// <param name="chunkIndex">Index of the chunk.</param>
-    /// <param name="totalChunks">Total number of chunks.</param>
-    /// <param name="chunkDataBase64">Base64-encoded chunk data.</param>
-    Task RelaySubgraphChunk(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, int chunkIndex, int totalChunks, string chunkDataBase64);
-
-    /// <summary>
-    /// Relays a tensor chunk to target partition when WebRTC data channel is not established.
-    /// </summary>
-    /// <param name="subtaskId">ID of the subtask.</param>
-    /// <param name="fromPartitionId">Source partition ID.</param>
-    /// <param name="toPartitionId">Target partition ID.</param>
-    /// <param name="tensorName">Name of the tensor.</param>
-    /// <param name="chunkIndex">Index of the chunk.</param>
-    /// <param name="totalChunks">Total number of chunks.</param>
-    /// <param name="chunkDataBase64">Base64-encoded chunk data.</param>
-    Task RelayTensorChunk(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string tensorName, int chunkIndex, int totalChunks, string chunkDataBase64);
-
-    #endregion
-
     #region TURN Credentials
 
     /// <summary>

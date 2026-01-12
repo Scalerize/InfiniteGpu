@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.SignalR.Client;
 using InfiniteGPU.Contracts.Hubs;
 using InfiniteGPU.Contracts.Hubs.Payloads;
+using SIPSorcery.Net;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -22,38 +25,49 @@ using ContractSubgraphTransferProgressPayload = InfiniteGPU.Contracts.Hubs.Paylo
 namespace Scalerize.InfiniteGpu.Desktop.Services
 {
     /// <summary>
-    /// Manages WebRTC peer connections for distributed partition execution.
-    /// Handles signaling through SignalR and data channel communication for tensor transfer.
+    /// Manages WebRTC peer connections for distributed partition execution using SIPSorcery.
+    /// Handles signaling through SignalR and data channel communication for tensor/subgraph transfer.
     /// </summary>
-    /// <remarks>
-    /// Note: This implementation provides the signaling and coordination layer.
-    /// Actual WebRTC data channels would require a native WebRTC library like
-    /// WebRTC.NET, libdatachannel, or similar. The tensor transfer falls back
-    /// to SignalR relay when native WebRTC is not available.
-    /// </remarks>
     public sealed class WebRtcPeerService : IAsyncDisposable
     {
         private readonly TensorSerializer _tensorSerializer;
         private readonly OnnxSubgraphSerializer _subgraphSerializer;
-        private readonly ConcurrentDictionary<Guid, PeerConnection> _peerConnections = new();
+        private readonly ConcurrentDictionary<Guid, WebRtcPeerConnection> _peerConnections = new();
         private readonly ConcurrentDictionary<Guid, ContractPartitionAssignment> _partitionAssignments = new();
-        private readonly ConcurrentDictionary<Guid, TensorReceiveBuffer> _tensorReceiveBuffers = new();
+        private readonly ConcurrentDictionary<(Guid SubtaskId, Guid TensorId), TensorReceiveBuffer> _tensorReceiveBuffers = new();
+        private readonly ConcurrentDictionary<(Guid SubtaskId, Guid PartitionId), SubgraphReceiveBuffer> _subgraphReceiveBuffers = new();
+        
+        // ICE server configuration
+        private RTCIceServer[]? _iceServers;
         
         private HubConnection? _hubConnection;
         private IDisposable? _offerSubscription;
         private IDisposable? _answerSubscription;
         private IDisposable? _iceCandidateSubscription;
+        private IDisposable? _iceRestartSubscription;
         private IDisposable? _partitionAssignedSubscription;
         private IDisposable? _partitionReadySubscription;
         private IDisposable? _partitionsReadySubscription;
         private IDisposable? _subgraphDistributionStartSubscription;
         private IDisposable? _subgraphTransferProgressSubscription;
 
+        /// <summary>Raised when a partition is assigned to this device.</summary>
         public event EventHandler<PartitionAssignedEventArgs>? PartitionAssigned;
+        
+        /// <summary>Raised when a tensor is fully received from another partition.</summary>
         public event EventHandler<TensorReceivedEventArgs>? TensorReceived;
+        
+        /// <summary>Raised when all partitions are ready for execution.</summary>
         public event EventHandler<PartitionsReadyEventArgs>? PartitionsReady;
+        
+        /// <summary>Raised when a single partition is ready with output tensors.</summary>
         public event EventHandler<PartitionReadyEventArgs>? PartitionReady;
+        
+        /// <summary>Raised when a subgraph is fully received from parent peer.</summary>
         public event EventHandler<SubgraphReceivedEventArgs>? SubgraphReceived;
+        
+        /// <summary>Raised when a WebRTC connection state changes.</summary>
+        public event EventHandler<WebRtcConnectionStateChangedEventArgs>? ConnectionStateChanged;
 
         public WebRtcPeerService(TensorSerializer tensorSerializer, OnnxSubgraphSerializer subgraphSerializer)
         {
@@ -103,7 +117,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         }
 
         /// <summary>
-        /// Handles incoming WebRTC offer and creates an answer.
+        /// Handles incoming WebRTC offer and creates an answer using SIPSorcery.
         /// </summary>
         private async Task HandleWebRtcOfferAsync(ContractWebRtcSignalingMessage message)
         {
@@ -111,57 +125,86 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
             try
             {
-                // Create/update peer connection for this partition pair
-                var connectionKey = message.FromPartitionId; // Use sender's ID as key
-                var peerConnection = _peerConnections.GetOrAdd(connectionKey, _ => new PeerConnection
+                var connectionKey = message.FromPartitionId;
+                
+                // Create SIPSorcery RTCPeerConnection
+                var rtcConfig = new RTCConfiguration
+                {
+                    iceServers = _iceServers ?? GetDefaultIceServers()
+                };
+                
+                var rtcPeerConnection = new RTCPeerConnection(rtcConfig);
+                
+                // Create our WebRTC peer connection wrapper
+                var webRtcConnection = new WebRtcPeerConnection
                 {
                     SubtaskId = message.SubtaskId,
                     LocalPartitionId = message.ToPartitionId,
                     RemotePartitionId = message.FromPartitionId,
-                    IsInitiator = false
-                });
-
-                // In a real implementation, we would:
-                // 1. Create RTCPeerConnection
-                // 2. Set remote description from offer
-                // 3. Create answer
-                // 4. Set local description
-                // 5. Send answer back
-
-                // For now, generate a placeholder answer for the signaling flow
-                var answer = new
-                {
-                    type = "answer",
-                    sdp = GeneratePlaceholderSdp("answer"),
-                    connectionEstablished = true
+                    IsInitiator = false,
+                    RtcPeerConnection = rtcPeerConnection,
+                    ConnectionState = WebRtcConnectionState.Connecting
                 };
-
-                var answerJson = JsonSerializer.Serialize(answer);
-
+                
+                // Setup event handlers
+                SetupPeerConnectionEventHandlers(webRtcConnection);
+                
+                // Store the connection
+                _peerConnections[connectionKey] = webRtcConnection;
+                
+                // Parse and set remote description from offer
+                var offerSdp = RTCSessionDescriptionInit.FromJSON(message.Payload);
+                var setRemoteResult = rtcPeerConnection.setRemoteDescription(offerSdp);
+                
+                if (setRemoteResult != SetDescriptionResultEnum.OK)
+                {
+                    throw new InvalidOperationException($"Failed to set remote description: {setRemoteResult}");
+                }
+                
+                // Create answer
+                var answer = rtcPeerConnection.createAnswer();
+                if (answer == null)
+                {
+                    throw new InvalidOperationException("Failed to create answer");
+                }
+                
+                // Set local description
+                var setLocalResult = rtcPeerConnection.setLocalDescription(answer);
+                if (setLocalResult != SetDescriptionResultEnum.OK)
+                {
+                    throw new InvalidOperationException($"Failed to set local description: {setLocalResult}");
+                }
+                
+                // Serialize answer to JSON
+                var answerJson = answer.toJSON();
+                
                 if (_hubConnection is not null)
                 {
                     await _hubConnection.InvokeAsync(
                         nameof(ITaskHubServer.SendWebRtcAnswer),
                         message.SubtaskId,
-                        message.ToPartitionId,    // We are the receiver, so ToPartitionId is our local partition
-                        message.FromPartitionId,   // Send answer back to the initiator
+                        message.ToPartitionId,
+                        message.FromPartitionId,
                         answerJson);
 
-                    peerConnection.ConnectionState = PeerConnectionState.AnswerSent;
+                    webRtcConnection.ConnectionState = WebRtcConnectionState.AnswerSent;
                     Debug.WriteLine($"[WebRtcPeerService] Sent answer to partition {message.FromPartitionId}");
-
-                    // Simulate connection established
-                    await NotifyConnectionEstablishedAsync(message.SubtaskId, message.ToPartitionId, message.FromPartitionId, isUpstream: true);
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[WebRtcPeerService] Error handling offer: {ex}");
+                ConnectionStateChanged?.Invoke(this, new WebRtcConnectionStateChangedEventArgs
+                {
+                    PartitionId = message.FromPartitionId,
+                    State = WebRtcConnectionState.Failed,
+                    ErrorMessage = ex.Message
+                });
             }
         }
 
         /// <summary>
-        /// Handles incoming WebRTC answer.
+        /// Handles incoming WebRTC answer using SIPSorcery.
         /// </summary>
         private async Task HandleWebRtcAnswerAsync(ContractWebRtcSignalingMessage message)
         {
@@ -169,34 +212,92 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
             try
             {
-                if (_peerConnections.TryGetValue(message.FromPartitionId, out var peerConnection))
+                if (_peerConnections.TryGetValue(message.FromPartitionId, out var webRtcConnection))
                 {
-                    // In a real implementation, we would:
-                    // 1. Set remote description from answer
-                    // 2. Complete ICE negotiation
-
-                    peerConnection.ConnectionState = PeerConnectionState.Connected;
-                    Debug.WriteLine($"[WebRtcPeerService] Connection established with partition {message.FromPartitionId}");
-
-                    // Notify that connection is established
-                    await NotifyConnectionEstablishedAsync(message.SubtaskId, message.ToPartitionId, message.FromPartitionId, isUpstream: false);
+                    var rtcPeerConnection = webRtcConnection.RtcPeerConnection;
+                    if (rtcPeerConnection == null)
+                    {
+                        throw new InvalidOperationException("RTCPeerConnection is null");
+                    }
+                    
+                    // Parse and set remote description from answer
+                    var answerSdp = RTCSessionDescriptionInit.FromJSON(message.Payload);
+                    var setRemoteResult = rtcPeerConnection.setRemoteDescription(answerSdp);
+                    
+                    if (setRemoteResult != SetDescriptionResultEnum.OK)
+                    {
+                        throw new InvalidOperationException($"Failed to set remote description: {setRemoteResult}");
+                    }
+                    
+                    webRtcConnection.ConnectionState = WebRtcConnectionState.AnswerReceived;
+                    Debug.WriteLine($"[WebRtcPeerService] Answer set, waiting for ICE connection with partition {message.FromPartitionId}");
+                    
+                    // Connection will be fully established when ICE completes (handled in event handlers)
+                }
+                else
+                {
+                    Debug.WriteLine($"[WebRtcPeerService] No peer connection found for partition {message.FromPartitionId}");
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[WebRtcPeerService] Error handling answer: {ex}");
+                ConnectionStateChanged?.Invoke(this, new WebRtcConnectionStateChangedEventArgs
+                {
+                    PartitionId = message.FromPartitionId,
+                    State = WebRtcConnectionState.Failed,
+                    ErrorMessage = ex.Message
+                });
             }
         }
 
         /// <summary>
-        /// Handles incoming ICE candidates.
+        /// Handles incoming ICE candidates using SIPSorcery.
         /// </summary>
         private Task HandleWebRtcIceCandidateAsync(ContractWebRtcSignalingMessage message)
         {
             Debug.WriteLine($"[WebRtcPeerService] Received ICE candidate from partition {message.FromPartitionId}");
 
-            // In a real implementation, we would add the ICE candidate to the peer connection
-            // For now, we simulate successful ICE negotiation
+            try
+            {
+                if (_peerConnections.TryGetValue(message.FromPartitionId, out var webRtcConnection))
+                {
+                    var rtcPeerConnection = webRtcConnection.RtcPeerConnection;
+                    if (rtcPeerConnection == null)
+                    {
+                        Debug.WriteLine($"[WebRtcPeerService] RTCPeerConnection is null for partition {message.FromPartitionId}");
+                        return Task.CompletedTask;
+                    }
+                    
+                    // Parse ice candidate from JSON payload
+                    var iceCandidate = JsonSerializer.Deserialize<IceCandidatePayload>(message.Payload);
+                    if (iceCandidate == null)
+                    {
+                        Debug.WriteLine($"[WebRtcPeerService] Failed to parse ICE candidate");
+                        return Task.CompletedTask;
+                    }
+                    
+                    // Create RTCIceCandidateInit from the parsed data
+                    var rtcIceCandidate = new RTCIceCandidateInit
+                    {
+                        candidate = iceCandidate.Candidate,
+                        sdpMid = iceCandidate.SdpMid,
+                        sdpMLineIndex = (ushort)(iceCandidate.SdpMLineIndex ?? 0)
+                    };
+                    
+                    // Add ICE candidate to peer connection
+                    rtcPeerConnection.addIceCandidate(rtcIceCandidate);
+                    Debug.WriteLine($"[WebRtcPeerService] Added ICE candidate from partition {message.FromPartitionId}");
+                }
+                else
+                {
+                    Debug.WriteLine($"[WebRtcPeerService] No peer connection found for ICE candidate from partition {message.FromPartitionId}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Error handling ICE candidate: {ex}");
+            }
 
             return Task.CompletedTask;
         }
@@ -275,8 +376,273 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             return Task.CompletedTask;
         }
 
+        #region Helper Methods
+
         /// <summary>
-        /// Sends a subgraph to a child peer partition via WebRTC.
+        /// Gets the default ICE servers for WebRTC connections.
+        /// </summary>
+        private static RTCIceServer[] GetDefaultIceServers()
+        {
+            return new RTCIceServer[]
+            {
+                new RTCIceServer { urls = "stun:stun.l.google.com:19302" },
+                new RTCIceServer { urls = "stun:stun1.l.google.com:19302" },
+                new RTCIceServer { urls = "stun:stun2.l.google.com:19302" },
+                new RTCIceServer { urls = "stun:stun3.l.google.com:19302" },
+                new RTCIceServer { urls = "stun:stun4.l.google.com:19302" }
+            };
+        }
+
+        /// <summary>
+        /// Sets up event handlers for the RTCPeerConnection.
+        /// </summary>
+        private void SetupPeerConnectionEventHandlers(WebRtcPeerConnection webRtcConnection)
+        {
+            var rtcPeerConnection = webRtcConnection.RtcPeerConnection;
+            if (rtcPeerConnection == null) return;
+
+            // Handle ICE candidate generation
+            rtcPeerConnection.onicecandidate += (candidate) =>
+            {
+                if (candidate != null && _hubConnection != null)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var iceCandidatePayload = new
+                            {
+                                candidate = candidate.candidate,
+                                sdpMid = candidate.sdpMid,
+                                sdpMLineIndex = candidate.sdpMLineIndex
+                            };
+                            
+                            var candidateJson = JsonSerializer.Serialize(iceCandidatePayload);
+                            
+                            await _hubConnection.InvokeAsync(
+                                nameof(ITaskHubServer.SendWebRtcIceCandidate),
+                                webRtcConnection.SubtaskId,
+                                webRtcConnection.LocalPartitionId,
+                                webRtcConnection.RemotePartitionId,
+                                candidateJson);
+                            
+                            Debug.WriteLine($"[WebRtcPeerService] Sent ICE candidate to partition {webRtcConnection.RemotePartitionId}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"[WebRtcPeerService] Error sending ICE candidate: {ex.Message}");
+                        }
+                    });
+                }
+            };
+
+            // Handle ICE connection state changes
+            rtcPeerConnection.oniceconnectionstatechange += (state) =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] ICE connection state changed to {state} for partition {webRtcConnection.RemotePartitionId}");
+                
+                switch (state)
+                {
+                    case RTCIceConnectionState.connected:
+                    case RTCIceConnectionState.completed:
+                        webRtcConnection.ConnectionState = WebRtcConnectionState.Connected;
+                        ConnectionStateChanged?.Invoke(this, new WebRtcConnectionStateChangedEventArgs
+                        {
+                            PartitionId = webRtcConnection.RemotePartitionId,
+                            State = WebRtcConnectionState.Connected
+                        });
+                        
+                        // Notify backend
+                        _ = Task.Run(async () =>
+                        {
+                            await NotifyConnectionEstablishedAsync(
+                                webRtcConnection.SubtaskId,
+                                webRtcConnection.LocalPartitionId,
+                                webRtcConnection.RemotePartitionId,
+                                !webRtcConnection.IsInitiator);
+                        });
+                        break;
+                        
+                    case RTCIceConnectionState.failed:
+                        webRtcConnection.ConnectionState = WebRtcConnectionState.Failed;
+                        ConnectionStateChanged?.Invoke(this, new WebRtcConnectionStateChangedEventArgs
+                        {
+                            PartitionId = webRtcConnection.RemotePartitionId,
+                            State = WebRtcConnectionState.Failed,
+                            ErrorMessage = "ICE connection failed"
+                        });
+                        break;
+                        
+                    case RTCIceConnectionState.disconnected:
+                    case RTCIceConnectionState.closed:
+                        webRtcConnection.ConnectionState = WebRtcConnectionState.Closed;
+                        ConnectionStateChanged?.Invoke(this, new WebRtcConnectionStateChangedEventArgs
+                        {
+                            PartitionId = webRtcConnection.RemotePartitionId,
+                            State = WebRtcConnectionState.Closed
+                        });
+                        break;
+                        
+                    case RTCIceConnectionState.checking:
+                        webRtcConnection.ConnectionState = WebRtcConnectionState.IceNegotiating;
+                        break;
+                }
+            };
+            
+            // Handle data channel creation (for non-initiator)
+            rtcPeerConnection.ondatachannel += (dataChannel) =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Data channel received from partition {webRtcConnection.RemotePartitionId}: {dataChannel.label}");
+                webRtcConnection.DataChannel = dataChannel;
+                SetupDataChannelEventHandlers(webRtcConnection, dataChannel);
+            };
+
+            // Handle connection state changes
+            rtcPeerConnection.onconnectionstatechange += (state) =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Connection state changed to {state} for partition {webRtcConnection.RemotePartitionId}");
+            };
+        }
+
+        /// <summary>
+        /// Sets up event handlers for the RTCDataChannel.
+        /// </summary>
+        private void SetupDataChannelEventHandlers(WebRtcPeerConnection webRtcConnection, RTCDataChannel dataChannel)
+        {
+            dataChannel.onopen += () =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Data channel opened for partition {webRtcConnection.RemotePartitionId}");
+            };
+
+            dataChannel.onclose += () =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Data channel closed for partition {webRtcConnection.RemotePartitionId}");
+            };
+
+            dataChannel.onerror += (error) =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Data channel error for partition {webRtcConnection.RemotePartitionId}: {error}");
+            };
+
+            dataChannel.onmessage += (dc, protocol, data) =>
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Received {data.Length} bytes from partition {webRtcConnection.RemotePartitionId}");
+                ProcessReceivedData(webRtcConnection.SubtaskId, webRtcConnection.RemotePartitionId, data);
+            };
+        }
+
+        /// <summary>
+        /// Processes received data from the data channel.
+        /// </summary>
+        private void ProcessReceivedData(Guid subtaskId, Guid fromPartitionId, byte[] data)
+        {
+            if (data.Length < 4)
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Received data too short to determine type");
+                return;
+            }
+            
+            // First 4 bytes indicate the message type
+            var messageType = BitConverter.ToInt32(data, 0);
+            var payload = new byte[data.Length - 4];
+            Array.Copy(data, 4, payload, 0, payload.Length);
+            
+            switch (messageType)
+            {
+                case 1: // Tensor chunk
+                    ProcessReceivedTensorChunk(subtaskId, fromPartitionId, payload);
+                    break;
+                case 2: // Subgraph metadata
+                    ProcessReceivedSubgraphMetadata(subtaskId, fromPartitionId, payload);
+                    break;
+                case 3: // Subgraph chunk
+                    ProcessReceivedSubgraphChunk(subtaskId, fromPartitionId, payload);
+                    break;
+                default:
+                    Debug.WriteLine($"[WebRtcPeerService] Unknown message type: {messageType}");
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Processes a received tensor chunk.
+        /// </summary>
+        private void ProcessReceivedTensorChunk(Guid subtaskId, Guid fromPartitionId, byte[] chunkData)
+        {
+            var chunk = _tensorSerializer.DeserializeChunk(chunkData);
+            if (chunk == null)
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Failed to deserialize tensor chunk");
+                return;
+            }
+            
+            var bufferKey = (subtaskId, chunk.TensorId);
+            var buffer = _tensorReceiveBuffers.GetOrAdd(bufferKey, _ => new TensorReceiveBuffer
+            {
+                TensorId = chunk.TensorId,
+                TensorName = chunk.TensorName,
+                TotalChunks = chunk.TotalChunks,
+                DataType = chunk.DataType,
+                Shape = chunk.Shape
+            });
+            
+            buffer.ReceivedChunks[chunk.ChunkIndex] = chunk.Data;
+            
+            if (buffer.IsComplete)
+            {
+                // Reassemble tensor
+                var totalSize = buffer.ReceivedChunks.Values.Sum(c => c.Length);
+                var tensorData = new byte[totalSize];
+                var offset = 0;
+                
+                for (int i = 0; i < buffer.TotalChunks; i++)
+                {
+                    if (buffer.ReceivedChunks.TryGetValue(i, out var chunkBytes))
+                    {
+                        Array.Copy(chunkBytes, 0, tensorData, offset, chunkBytes.Length);
+                        offset += chunkBytes.Length;
+                    }
+                }
+                
+                // Remove from buffers
+                _tensorReceiveBuffers.TryRemove(bufferKey, out _);
+                
+                // Raise event
+                TensorReceived?.Invoke(this, new TensorReceivedEventArgs
+                {
+                    SubtaskId = subtaskId,
+                    FromPartitionId = fromPartitionId,
+                    TensorName = buffer.TensorName,
+                    DataType = buffer.DataType,
+                    Shape = buffer.Shape,
+                    Data = tensorData
+                });
+                
+                Debug.WriteLine($"[WebRtcPeerService] Tensor {buffer.TensorName} fully received ({tensorData.Length} bytes)");
+            }
+        }
+
+        /// <summary>
+        /// Processes received subgraph metadata.
+        /// </summary>
+        private void ProcessReceivedSubgraphMetadata(Guid subtaskId, Guid fromPartitionId, byte[] metadataBytes)
+        {
+            var metadata = _subgraphSerializer.DeserializeMetadata(metadataBytes);
+            if (metadata == null)
+            {
+                Debug.WriteLine($"[WebRtcPeerService] Failed to deserialize subgraph metadata");
+                return;
+            }
+            
+            // Start receiving subgraph with metadata
+            _subgraphSerializer.StartReceiving(metadata);
+            Debug.WriteLine($"[WebRtcPeerService] Started receiving subgraph for partition {metadata.PartitionId}");
+        }
+
+        #endregion
+
+        /// <summary>
+        /// Sends a subgraph to a child peer partition via WebRTC data channel.
         /// </summary>
         public async Task SendSubgraphAsync(
             Guid subtaskId,
@@ -295,6 +661,14 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 throw new InvalidOperationException("Hub connection not initialized");
             }
 
+            // Require a WebRTC connection
+            if (!_peerConnections.TryGetValue(targetPartitionId, out var peerConnection) ||
+                peerConnection.ConnectionState != WebRtcConnectionState.Connected ||
+                peerConnection.DataChannel == null)
+            {
+                throw new InvalidOperationException($"No active WebRTC connection to partition {targetPartitionId}");
+            }
+
             try
             {
                 // Create metadata
@@ -307,18 +681,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     inputTensorNames,
                     outputTensorNames);
 
-                // Check if we have a direct WebRTC connection
-                if (_peerConnections.TryGetValue(targetPartitionId, out var peerConnection) &&
-                    peerConnection.ConnectionState == PeerConnectionState.Connected)
-                {
-                    // Send via WebRTC data channel
-                    await SendSubgraphViaWebRtcAsync(peerConnection, metadata, subgraphBytes, cancellationToken);
-                }
-                else
-                {
-                    // Fallback: Send via SignalR relay (chunked)
-                    await SendSubgraphViaSignalRRelayAsync(subtaskId, localPartitionId, targetPartitionId, metadata, subgraphBytes, cancellationToken);
-                }
+                // Send via WebRTC data channel
+                await SendSubgraphViaWebRtcAsync(peerConnection, metadata, subgraphBytes, cancellationToken);
 
                 // Report transfer complete
                 await _hubConnection.InvokeAsync(
@@ -343,90 +707,62 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// Sends subgraph via direct WebRTC data channel.
         /// </summary>
         private async Task SendSubgraphViaWebRtcAsync(
-            PeerConnection peerConnection,
+            WebRtcPeerConnection peerConnection,
             OnnxSubgraphSerializer.SubgraphMetadata metadata,
             byte[] subgraphBytes,
             CancellationToken cancellationToken)
         {
-            // Send metadata first
-            var metadataBytes = _subgraphSerializer.SerializeMetadata(metadata);
-            peerConnection.DataChannel.Send(metadataBytes);
-
-            // Send chunks
-            foreach (var chunk in _subgraphSerializer.CreateChunks(subgraphBytes, metadata.SubtaskId, metadata.PartitionId))
+            var dataChannel = peerConnection.DataChannel;
+            if (dataChannel == null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                
-                var chunkBytes = _subgraphSerializer.SerializeChunk(chunk);
-                peerConnection.DataChannel.Send(chunkBytes);
-                
-                await Task.Delay(1, cancellationToken); // Small delay to avoid overwhelming
+                throw new InvalidOperationException("Data channel is not available");
             }
-        }
 
-        /// <summary>
-        /// Sends subgraph via SignalR relay (fallback).
-        /// </summary>
-        private async Task SendSubgraphViaSignalRRelayAsync(
-            Guid subtaskId,
-            Guid localPartitionId,
-            Guid targetPartitionId,
-            OnnxSubgraphSerializer.SubgraphMetadata metadata,
-            byte[] subgraphBytes,
-            CancellationToken cancellationToken)
-        {
-            if (_hubConnection is null) return;
-
-            // Send metadata
+            // Send metadata first with message type prefix (2 = subgraph metadata)
             var metadataBytes = _subgraphSerializer.SerializeMetadata(metadata);
-            var metadataBase64 = Convert.ToBase64String(metadataBytes);
+            var metadataMessage = PrependMessageType(2, metadataBytes);
+            dataChannel.send(metadataMessage);
             
-            await _hubConnection.InvokeAsync(
-                nameof(ITaskHubServer.RelaySubgraphMetadata),
-                subtaskId,
-                localPartitionId,
-                targetPartitionId,
-                metadataBase64,
-                cancellationToken);
+            Debug.WriteLine($"[WebRtcPeerService] Sent subgraph metadata ({metadataBytes.Length} bytes)");
 
-            // Send chunks
-            var chunks = _subgraphSerializer.CreateChunks(subgraphBytes, subtaskId, targetPartitionId).ToList();
+            // Send chunks with message type prefix (3 = subgraph chunk)
+            var chunks = _subgraphSerializer.CreateChunks(subgraphBytes, metadata.SubtaskId, metadata.PartitionId).ToList();
             var totalChunks = chunks.Count;
             var sentChunks = 0;
-
+            
             foreach (var chunk in chunks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
+                
                 var chunkBytes = _subgraphSerializer.SerializeChunk(chunk);
-                var chunkBase64 = Convert.ToBase64String(chunkBytes);
-
-                await _hubConnection.InvokeAsync(
-                    nameof(ITaskHubServer.RelaySubgraphChunk),
-                    subtaskId,
-                    localPartitionId,
-                    targetPartitionId,
-                    chunk.ChunkIndex,
-                    chunk.TotalChunks,
-                    chunkBase64,
-                    cancellationToken);
-
+                var chunkMessage = PrependMessageType(3, chunkBytes);
+                dataChannel.send(chunkMessage);
+                
                 sentChunks++;
-
+                
                 // Report progress periodically
                 if (sentChunks % 10 == 0 || sentChunks == totalChunks)
                 {
-                    var progress = (sentChunks * subgraphBytes.Length) / totalChunks;
-                    await _hubConnection.InvokeAsync(
-                        nameof(ITaskHubServer.ReportSubgraphTransferProgress),
-                        subtaskId,
-                        localPartitionId,
-                        targetPartitionId,
-                        (long)progress,
-                        (long)subgraphBytes.Length,
-                        cancellationToken);
+                    var progress = (long)((sentChunks * subgraphBytes.Length) / totalChunks);
+                    Debug.WriteLine($"[WebRtcPeerService] Subgraph transfer progress: {sentChunks}/{totalChunks} chunks ({progress * 100 / subgraphBytes.Length}%)");
                 }
+                
+                // Small delay to avoid overwhelming the data channel
+                await Task.Delay(1, cancellationToken);
             }
+            
+            Debug.WriteLine($"[WebRtcPeerService] All {totalChunks} subgraph chunks sent");
+        }
+
+        /// <summary>
+        /// Prepends a message type identifier to the data payload.
+        /// </summary>
+        private static byte[] PrependMessageType(int messageType, byte[] data)
+        {
+            var result = new byte[4 + data.Length];
+            BitConverter.GetBytes(messageType).CopyTo(result, 0);
+            data.CopyTo(result, 4);
+            return result;
         }
 
         /// <summary>
@@ -478,39 +814,68 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         }
 
         /// <summary>
-        /// Initiates a WebRTC connection with a peer partition.
+        /// Initiates a WebRTC connection with a peer partition using SIPSorcery.
         /// </summary>
         private async Task InitiateConnectionAsync(Guid subtaskId, Guid localPartitionId, ContractWebRtcPeerInfo peerInfo)
         {
             Debug.WriteLine($"[WebRtcPeerService] Initiating connection from {localPartitionId} to {peerInfo.PartitionId}");
 
-            var peerConnection = new PeerConnection
-            {
-                SubtaskId = subtaskId,
-                LocalPartitionId = localPartitionId,
-                RemotePartitionId = peerInfo.PartitionId,
-                IsInitiator = true,
-                ConnectionState = PeerConnectionState.Connecting
-            };
-
-            _peerConnections[peerInfo.PartitionId] = peerConnection;
-
             try
             {
-                // In a real implementation, we would:
-                // 1. Create RTCPeerConnection
-                // 2. Create data channel
-                // 3. Create offer
-                // 4. Set local description
-                // 5. Send offer through SignalR
-
-                var offer = new
+                // Create SIPSorcery RTCPeerConnection
+                var rtcConfig = new RTCConfiguration
                 {
-                    type = "offer",
-                    sdp = GeneratePlaceholderSdp("offer")
+                    iceServers = _iceServers ?? GetDefaultIceServers()
                 };
+                
+                var rtcPeerConnection = new RTCPeerConnection(rtcConfig);
+                
+                // Create WebRTC peer connection wrapper
+                var webRtcConnection = new WebRtcPeerConnection
+                {
+                    SubtaskId = subtaskId,
+                    LocalPartitionId = localPartitionId,
+                    RemotePartitionId = peerInfo.PartitionId,
+                    IsInitiator = true,
+                    RtcPeerConnection = rtcPeerConnection,
+                    ConnectionState = WebRtcConnectionState.Connecting
+                };
+                
+                // Setup event handlers
+                SetupPeerConnectionEventHandlers(webRtcConnection);
+                
+                // Store the connection
+                _peerConnections[peerInfo.PartitionId] = webRtcConnection;
 
-                var offerJson = JsonSerializer.Serialize(offer);
+                // Create data channel for tensor/subgraph transfer
+                var dataChannelInit = new RTCDataChannelInit
+                {
+                    ordered = true,
+                    maxRetransmits = 3
+                };
+                
+                var dataChannel = await rtcPeerConnection.createDataChannel($"partition-{localPartitionId}-{peerInfo.PartitionId}", dataChannelInit);
+                webRtcConnection.DataChannel = dataChannel;
+                
+                // Setup data channel event handlers
+                SetupDataChannelEventHandlers(webRtcConnection, dataChannel);
+
+                // Create offer
+                var offer = rtcPeerConnection.createOffer();
+                if (offer == null)
+                {
+                    throw new InvalidOperationException("Failed to create offer");
+                }
+                
+                // Set local description
+                var setLocalResult = rtcPeerConnection.setLocalDescription(offer);
+                if (setLocalResult != SetDescriptionResultEnum.OK)
+                {
+                    throw new InvalidOperationException($"Failed to set local description: {setLocalResult}");
+                }
+                
+                // Serialize offer to JSON
+                var offerJson = offer.toJSON();
 
                 if (_hubConnection is not null)
                 {
@@ -521,14 +886,25 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         peerInfo.PartitionId,
                         offerJson);
 
-                    peerConnection.ConnectionState = PeerConnectionState.OfferSent;
+                    webRtcConnection.ConnectionState = WebRtcConnectionState.OfferSent;
                     Debug.WriteLine($"[WebRtcPeerService] Sent offer to partition {peerInfo.PartitionId}");
                 }
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[WebRtcPeerService] Error initiating connection: {ex}");
-                peerConnection.ConnectionState = PeerConnectionState.Failed;
+                
+                if (_peerConnections.TryGetValue(peerInfo.PartitionId, out var conn))
+                {
+                    conn.ConnectionState = WebRtcConnectionState.Failed;
+                }
+                
+                ConnectionStateChanged?.Invoke(this, new WebRtcConnectionStateChangedEventArgs
+                {
+                    PartitionId = peerInfo.PartitionId,
+                    State = WebRtcConnectionState.Failed,
+                    ErrorMessage = ex.Message
+                });
             }
         }
 
@@ -557,8 +933,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         }
 
         /// <summary>
-        /// Sends a tensor to a downstream partition.
-        /// Falls back to SignalR relay if direct WebRTC is not available.
+        /// Sends a tensor to a downstream partition via WebRTC data channel.
         /// </summary>
         public async Task SendTensorAsync(
             Guid subtaskId,
@@ -572,22 +947,19 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         {
             Debug.WriteLine($"[WebRtcPeerService] Sending tensor {tensorName} ({data.Length} bytes) to partition {targetPartitionId}");
 
+            // Require a WebRTC connection
+            if (!_peerConnections.TryGetValue(targetPartitionId, out var peerConnection) ||
+                peerConnection.ConnectionState != WebRtcConnectionState.Connected ||
+                peerConnection.DataChannel == null)
+            {
+                throw new InvalidOperationException($"No active WebRTC connection to partition {targetPartitionId}");
+            }
+
             // Serialize the tensor
             var serializedTensor = _tensorSerializer.SerializeTensor(subtaskId, tensorName, dataType, shape, data);
 
-            // Check if we have a direct connection
-            if (_peerConnections.TryGetValue(targetPartitionId, out var peerConnection) &&
-                peerConnection.ConnectionState == PeerConnectionState.Connected &&
-                peerConnection.DataChannel is not null)
-            {
-                // Send via WebRTC data channel
-                await SendViaPeerConnectionAsync(peerConnection, serializedTensor, cancellationToken);
-            }
-            else
-            {
-                // Fallback: Send via SignalR relay (chunked)
-                await SendViaSignalRRelayAsync(subtaskId, localPartitionId, targetPartitionId, serializedTensor, cancellationToken);
-            }
+            // Send via WebRTC data channel
+            await SendViaPeerConnectionAsync(peerConnection, serializedTensor, cancellationToken);
 
             // Report progress
             await ReportTransferProgressAsync(subtaskId, localPartitionId, targetPartitionId, tensorName, data.Length, data.Length, cancellationToken);
@@ -597,72 +969,44 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// Sends tensor via direct WebRTC data channel.
         /// </summary>
         private async Task SendViaPeerConnectionAsync(
-            PeerConnection peerConnection,
+            WebRtcPeerConnection peerConnection,
             TensorSerializer.SerializedTensor tensor,
             CancellationToken cancellationToken)
         {
+            var dataChannel = peerConnection.DataChannel;
+            if (dataChannel == null)
+            {
+                throw new InvalidOperationException("Data channel is not available");
+            }
+
             // Chunk the tensor for reliable delivery
-            foreach (var chunk in _tensorSerializer.ChunkTensor(tensor))
+            var chunks = _tensorSerializer.ChunkTensor(tensor).ToList();
+            var totalChunks = chunks.Count;
+            var sentChunks = 0;
+            
+            foreach (var chunk in chunks)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 
                 var chunkBytes = _tensorSerializer.SerializeChunk(chunk);
                 
-                // In a real implementation, send via RTCDataChannel
-                // peerConnection.DataChannel.Send(chunkBytes);
+                // Prepend message type (1 = tensor chunk)
+                var message = PrependMessageType(1, chunkBytes);
+                dataChannel.send(message);
+                
+                sentChunks++;
+                
+                // Report progress periodically
+                if (sentChunks % 10 == 0 || sentChunks == totalChunks)
+                {
+                    Debug.WriteLine($"[WebRtcPeerService] Tensor transfer progress: {sentChunks}/{totalChunks} chunks");
+                }
                 
                 // Small delay to avoid overwhelming the data channel
                 await Task.Delay(1, cancellationToken);
             }
-        }
-
-        /// <summary>
-        /// Sends tensor via SignalR relay (fallback when WebRTC is not available).
-        /// </summary>
-        private async Task SendViaSignalRRelayAsync(
-            Guid subtaskId,
-            Guid localPartitionId,
-            Guid targetPartitionId,
-            TensorSerializer.SerializedTensor tensor,
-            CancellationToken cancellationToken)
-        {
-            if (_hubConnection is null)
-            {
-                throw new InvalidOperationException("Hub connection not initialized");
-            }
-
-            var chunks = _tensorSerializer.ChunkTensor(tensor).ToList();
-            var totalChunks = chunks.Count;
-            var sentChunks = 0;
-
-            foreach (var chunk in chunks)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var chunkBytes = _tensorSerializer.SerializeChunk(chunk);
-                var base64Data = Convert.ToBase64String(chunkBytes);
-
-                // Send chunk via SignalR
-                await _hubConnection.InvokeAsync(
-                    nameof(ITaskHubServer.RelayTensorChunk),
-                    subtaskId,
-                    localPartitionId,
-                    targetPartitionId,
-                    tensor.Name,
-                    chunk.ChunkIndex,
-                    chunk.TotalChunks,
-                    base64Data,
-                    cancellationToken);
-
-                sentChunks++;
-
-                // Report progress periodically
-                if (sentChunks % 10 == 0 || sentChunks == totalChunks)
-                {
-                    var progress = (sentChunks * tensor.TotalSize) / totalChunks;
-                    await ReportTransferProgressAsync(subtaskId, localPartitionId, targetPartitionId, tensor.Name, progress, tensor.TotalSize, cancellationToken);
-                }
-            }
+            
+            Debug.WriteLine($"[WebRtcPeerService] All {totalChunks} tensor chunks sent for {tensor.Name}");
         }
 
         /// <summary>
@@ -850,12 +1194,6 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             Debug.WriteLine($"[WebRtcPeerService] Cleaned up {connectionsToRemove.Count} connections for subtask {subtaskId}");
         }
 
-        private static string GeneratePlaceholderSdp(string type)
-        {
-            // Placeholder SDP for signaling flow simulation
-            return $"v=0\r\no=- {DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()} 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na={type}\r\n";
-        }
-
         public async ValueTask DisposeAsync()
         {
             _offerSubscription?.Dispose();
@@ -881,42 +1219,68 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
         #region Internal Types
 
-        private enum PeerConnectionState
-        {
-            None,
-            Connecting,
-            OfferSent,
-            OfferReceived,
-            AnswerSent,
-            Connected,
-            Failed,
-            Closed
-        }
-
-        private sealed class PeerConnection : IDisposable
+        /// <summary>
+        /// WebRTC peer connection wrapper that holds SIPSorcery RTCPeerConnection and RTCDataChannel.
+        /// </summary>
+        private sealed class WebRtcPeerConnection : IDisposable
         {
             public Guid SubtaskId { get; init; }
             public Guid LocalPartitionId { get; init; }
             public Guid RemotePartitionId { get; init; }
             public bool IsInitiator { get; init; }
-            public PeerConnectionState ConnectionState { get; set; }
-            
-            // In a real implementation, this would be an RTCDataChannel
-            public object? DataChannel { get; set; }
+            public WebRtcConnectionState ConnectionState { get; set; }
+            public RTCPeerConnection? RtcPeerConnection { get; set; }
+            public RTCDataChannel? DataChannel { get; set; }
 
             public void Dispose()
             {
-                // Clean up native WebRTC resources
+                try
+                {
+                    DataChannel?.close();
+                    RtcPeerConnection?.close();
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[WebRtcPeerConnection] Error during disposal: {ex.Message}");
+                }
             }
         }
 
+        /// <summary>
+        /// Buffer for receiving tensor chunks.
+        /// </summary>
         private sealed class TensorReceiveBuffer
         {
             public Guid TensorId { get; init; }
             public string TensorName { get; init; } = string.Empty;
             public int TotalChunks { get; init; }
+            public TensorSerializer.TensorDataType DataType { get; init; }
+            public int[] Shape { get; init; } = Array.Empty<int>();
             public ConcurrentDictionary<int, byte[]> ReceivedChunks { get; } = new();
             public bool IsComplete => ReceivedChunks.Count == TotalChunks;
+        }
+        
+        /// <summary>
+        /// Buffer for receiving subgraph chunks.
+        /// </summary>
+        private sealed class SubgraphReceiveBuffer
+        {
+            public Guid SubtaskId { get; init; }
+            public Guid PartitionId { get; init; }
+            public int TotalChunks { get; init; }
+            public long TotalSize { get; init; }
+            public ConcurrentDictionary<int, byte[]> ReceivedChunks { get; } = new();
+            public bool IsComplete => ReceivedChunks.Count == TotalChunks;
+        }
+        
+        /// <summary>
+        /// Payload for deserializing ICE candidate from JSON.
+        /// </summary>
+        private sealed class IceCandidatePayload
+        {
+            public string Candidate { get; set; } = string.Empty;
+            public string? SdpMid { get; set; }
+            public int? SdpMLineIndex { get; set; }
         }
 
         #endregion
@@ -988,6 +1352,43 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         public Guid PartitionId { get; init; }
         public byte[] SubgraphBytes { get; init; } = Array.Empty<byte>();
         public bool IsValid { get; init; }
+        public string? ErrorMessage { get; init; }
+    }
+
+    /// <summary>
+    /// WebRTC connection state enumeration for tracking peer connection lifecycle.
+    /// </summary>
+    public enum WebRtcConnectionState
+    {
+        /// <summary>Initial state before any connection attempt.</summary>
+        None,
+        /// <summary>Connection attempt in progress.</summary>
+        Connecting,
+        /// <summary>WebRTC offer has been sent, waiting for answer.</summary>
+        OfferSent,
+        /// <summary>WebRTC offer received, creating answer.</summary>
+        OfferReceived,
+        /// <summary>WebRTC answer sent, waiting for ICE completion.</summary>
+        AnswerSent,
+        /// <summary>WebRTC answer received, waiting for ICE completion.</summary>
+        AnswerReceived,
+        /// <summary>ICE negotiation in progress.</summary>
+        IceNegotiating,
+        /// <summary>Connection fully established and ready for data transfer.</summary>
+        Connected,
+        /// <summary>Connection attempt failed.</summary>
+        Failed,
+        /// <summary>Connection has been closed.</summary>
+        Closed
+    }
+
+    /// <summary>
+    /// Event args for when a WebRTC connection state changes.
+    /// </summary>
+    public sealed class WebRtcConnectionStateChangedEventArgs : EventArgs
+    {
+        public Guid PartitionId { get; init; }
+        public WebRtcConnectionState State { get; init; }
         public string? ErrorMessage { get; init; }
     }
 

@@ -193,31 +193,6 @@ public static class TaskHubEvents
     public const string OnPartitioningProgress = "OnPartitioningProgress";
     
     #endregion
-    
-    #region Relay Events (SignalR fallback when WebRTC not available)
-    
-    /// <summary>
-    /// Event sent when subgraph metadata is relayed through SignalR.
-    /// Used when WebRTC data channel is not established.
-    /// Payload: <see cref="Payloads.SubgraphMetadataRelayPayload"/>
-    /// </summary>
-    public const string OnSubgraphMetadataReceived = "OnSubgraphMetadataReceived";
-    
-    /// <summary>
-    /// Event sent when a subgraph chunk is relayed through SignalR.
-    /// Used when WebRTC data channel is not established.
-    /// Payload: <see cref="Payloads.SubgraphChunkRelayPayload"/>
-    /// </summary>
-    public const string OnSubgraphChunkReceived = "OnSubgraphChunkReceived";
-    
-    /// <summary>
-    /// Event sent when a tensor chunk is relayed through SignalR.
-    /// Used when WebRTC data channel is not established.
-    /// Payload: <see cref="Payloads.TensorChunkRelayPayload"/>
-    /// </summary>
-    public const string OnTensorChunkReceived = "OnTensorChunkReceived";
-    
-    #endregion
 }
 
 /// <summary>

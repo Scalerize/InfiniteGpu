@@ -167,23 +167,4 @@ public interface ITaskHubClient
     Task OnPartitioningProgress(PartitioningProgressPayload payload);
 
     #endregion
-
-    #region Relay Events (SignalR fallback when WebRTC not available)
-
-    /// <summary>
-    /// Called when subgraph metadata is relayed through SignalR (WebRTC fallback).
-    /// </summary>
-    Task OnSubgraphMetadataReceived(SubgraphMetadataRelayPayload payload);
-
-    /// <summary>
-    /// Called when a subgraph chunk is relayed through SignalR (WebRTC fallback).
-    /// </summary>
-    Task OnSubgraphChunkReceived(SubgraphChunkRelayPayload payload);
-
-    /// <summary>
-    /// Called when a tensor chunk is relayed through SignalR (WebRTC fallback).
-    /// </summary>
-    Task OnTensorChunkReceived(TensorChunkRelayPayload payload);
-
-    #endregion
 }

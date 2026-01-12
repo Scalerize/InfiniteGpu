@@ -35,6 +35,7 @@
 		<PackageReference Include="OpenCL.Net" Version="2.2.9" />
 		<PackageReference Include="OpenCvSharp4" Version="4.11.0.20250507" />
 		<PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
+		<PackageReference Include="SIPSorcery" Version="6.3.4" />
 		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
 		<PackageReference Include="System.Management" Version="10.0.1" />
 	</ItemGroup>
