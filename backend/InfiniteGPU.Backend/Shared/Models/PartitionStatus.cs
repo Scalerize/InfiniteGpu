@@ -64,6 +64,13 @@ public enum PartitionStatus
     Connected = 8,
 
     /// <summary>
+    /// Partition is ready (subgraph received and validated, connections established).
+    /// Alias for Connected to maintain compatibility.
+    /// </summary>
+    [Description("Ready")]
+    Ready = 15,
+
+    /// <summary>
     /// Currently executing the partition's ONNX subgraph.
     /// </summary>
     [Description("Executing")]
@@ -110,6 +117,12 @@ public enum SubgraphReceiveStatus
     /// </summary>
     [Description("N/A")]
     NotApplicable = 0,
+
+    /// <summary>
+    /// Pending - waiting for distribution to start.
+    /// </summary>
+    [Description("Pending")]
+    Pending = 5,
 
     /// <summary>
     /// Waiting for parent peer to establish WebRTC connection.

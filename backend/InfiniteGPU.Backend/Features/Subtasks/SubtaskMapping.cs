@@ -238,29 +238,29 @@ internal static class SubtaskMapping
                 Id = p.Id,
                 SubtaskId = p.SubtaskId,
                 PartitionIndex = p.PartitionIndex,
-                OnnxSubgraphBlobUri = p.OnnxSubgraphBlobUri ?? string.Empty,
+                OnnxSubgraphBlobUri = p.OnnxFullModelBlobUri ?? string.Empty,
                 InputTensorNames = ParseTensorNames(p.InputTensorNamesJson),
                 OutputTensorNames = ParseTensorNames(p.OutputTensorNamesJson),
                 Status = p.Status,
                 Progress = p.Progress,
-                AssignedDeviceId = p.AssignedDeviceId,
-                AssignedDeviceConnectionId = p.AssignedDeviceConnectionId,
-                AssignedToUserId = p.AssignedToUserId,
+                AssignedDeviceId = p.DeviceId,
+                AssignedDeviceConnectionId = p.ConnectionId,
+                AssignedToUserId = p.AssignedProviderId,
                 CreatedAtUtc = p.CreatedAtUtc,
                 AssignedAtUtc = p.AssignedAtUtc,
                 StartedAtUtc = p.StartedAtUtc,
                 CompletedAtUtc = p.CompletedAtUtc,
                 FailedAtUtc = p.FailedAtUtc,
                 FailureReason = p.FailureReason,
-                EstimatedMemoryMb = p.EstimatedMemoryMb,
-                EstimatedComputeTflops = p.EstimatedComputeTflops,
+                EstimatedMemoryMb = p.EstimatedMemoryBytes / (1024 * 1024),
+                EstimatedComputeTflops = p.EstimatedComputeCost,
                 UpstreamConnectionState = p.UpstreamConnectionState,
                 DownstreamConnectionState = p.DownstreamConnectionState,
                 UpstreamPartitionId = p.UpstreamPartitionId,
                 DownstreamPartitionId = p.DownstreamPartitionId,
-                TensorsBytesReceived = p.TensorsBytesReceived,
-                TensorsBytesSent = p.TensorsBytesSent,
-                ExecutionDurationMs = p.ExecutionDurationMs
+                TensorsBytesReceived = p.EstimatedTransferBytes,
+                TensorsBytesSent = p.EstimatedTransferBytes,
+                ExecutionDurationMs = (long?)((p.DurationSeconds ?? 0) * 1000)
             })
             .ToArray();
     }
@@ -302,7 +302,8 @@ internal static class SubtaskMapping
 
         try
         {
-            return JsonSerializer.Deserialize<List<string>>(tensorNamesJson, JsonOptions) ?? Array.Empty<string>();
+            var result = JsonSerializer.Deserialize<List<string>>(tensorNamesJson, JsonOptions);
+            return result ?? (IReadOnlyList<string>)Array.Empty<string>();
         }
         catch (JsonException)
         {

@@ -1077,7 +1077,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         public async Task ReportPartitionCompletedAsync(
             Guid subtaskId,
             Guid partitionId,
-            string? resultJson,
+            PartitionResultPayload result,
             CancellationToken cancellationToken = default)
         {
             if (_hubConnection is null) return;
@@ -1087,8 +1087,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 await _hubConnection.InvokeAsync(
                     nameof(ITaskHubServer.ReportPartitionCompleted),
                     subtaskId,
-                    partitionId,
-                    resultJson,
+                    result,
                     cancellationToken);
 
                 Debug.WriteLine($"[WebRtcPeerService] Reported partition {partitionId} completed");

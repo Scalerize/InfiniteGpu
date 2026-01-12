@@ -534,22 +534,26 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 stopwatch?.Stop();
 
-                var resultPayload = new
+                var resultPayload = new SubtaskResultPayload
                 {
-                    subtaskId = subtask.Id,
-                    completedAtUtc = DateTimeOffset.UtcNow,
-                    metrics = new
+                    SubtaskId = subtask.Id,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    Metrics = new SubtaskExecutionMetrics
                     {
-                        durationSeconds = stopwatch.Elapsed.TotalSeconds,
-                        device = _onnxRuntimeService.GetExecutionProvider().ToString().ToLowerInvariant(),
-                        memoryGBytes = _hardwareMetricsService.GetMemoryInfo().TotalGb.Value
+                        DurationSeconds = stopwatch.Elapsed.TotalSeconds,
+                        Device = _onnxRuntimeService.GetExecutionProvider().ToString().ToLowerInvariant(),
+                        MemoryGBytes = _hardwareMetricsService.GetMemoryInfo().TotalGb.Value
                     },
-                    outputs = processedOutputs
+                    Outputs = processedOutputs?.Select(o => new SubtaskOutputDescriptor
+                    {
+                        Name = o.Name,
+                        PayloadType = o.PayloadType,
+                        Value = o.Value,
+                        FileUrl = o.FileUrl
+                    }).ToList()
                 };
 
-                var resultJson = JsonSerializer.Serialize(resultPayload, SerializerOptions);
-
-                await connection.InvokeAsync(nameof(ITaskHubServer.SubmitResult), subtask.Id, resultJson, cancellationToken);
+                await connection.InvokeAsync(nameof(ITaskHubServer.SubmitResult), resultPayload, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -559,18 +563,17 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             {
                 Debug.WriteLine($"[BackgroundWorkService] Execution failed for subtask {subtask.Id}: {ex}");
 
-                var errorPayload = new
+                var failurePayload = new SubtaskFailureResultPayload
                 {
-                    subtaskId = subtask.Id,
-                    failedAtUtc = DateTimeOffset.UtcNow,
-                    error = ex.Message
+                    SubtaskId = subtask.Id,
+                    FailedAtUtc = DateTimeOffset.UtcNow,
+                    Error = ex.Message,
+                    StackTrace = ex.StackTrace
                 };
-
-                var errorJson = JsonSerializer.Serialize(errorPayload, SerializerOptions);
 
                 try
                 {
-                    await connection.InvokeAsync(nameof(ITaskHubServer.FailedResult), subtask.Id, errorJson, cancellationToken);
+                    await connection.InvokeAsync(nameof(ITaskHubServer.FailedResult), failurePayload, cancellationToken);
                 }
                 catch (Exception submitEx)
                 {
@@ -648,18 +651,17 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             {
                 Debug.WriteLine($"[BackgroundWorkService] Distributed execution setup failed for subtask {subtask.Id}: {ex}");
                 
-                var errorPayload = new
+                var failurePayload = new SubtaskFailureResultPayload
                 {
-                    subtaskId = subtask.Id,
-                    failedAtUtc = DateTimeOffset.UtcNow,
-                    error = $"Distributed execution setup failed: {ex.Message}"
+                    SubtaskId = subtask.Id,
+                    FailedAtUtc = DateTimeOffset.UtcNow,
+                    Error = $"Distributed execution setup failed: {ex.Message}",
+                    StackTrace = ex.StackTrace
                 };
-
-                var errorJson = JsonSerializer.Serialize(errorPayload, SerializerOptions);
 
                 try
                 {
-                    await connection.InvokeAsync(nameof(ITaskHubServer.FailedResult), subtask.Id, errorJson, cancellationToken);
+                    await connection.InvokeAsync(nameof(ITaskHubServer.FailedResult), failurePayload, cancellationToken);
                 }
                 catch (Exception submitEx)
                 {
@@ -1266,29 +1268,28 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     // Final partition: report completion
                     stopwatch.Stop();
 
-                    var resultPayload = new
+                    var partitionResult = new PartitionResultPayload
                     {
-                        partitionId = assignment.PartitionId,
-                        partitionIndex = assignment.PartitionIndex,
-                        completedAtUtc = DateTimeOffset.UtcNow,
-                        metrics = new
+                        PartitionId = assignment.PartitionId,
+                        PartitionIndex = assignment.PartitionIndex,
+                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        Metrics = new PartitionExecutionMetrics
                         {
-                            durationSeconds = stopwatch.Elapsed.TotalSeconds,
-                            device = _onnxRuntimeService.GetExecutionProvider().ToString().ToLowerInvariant()
+                            DurationSeconds = stopwatch.Elapsed.TotalSeconds,
+                            Device = _onnxRuntimeService.GetExecutionProvider().ToString().ToLowerInvariant()
                         },
-                        outputs = inferenceResult.Outputs.Select(o => new
+                        Outputs = inferenceResult.Outputs.Select(o => new PartitionOutputDescriptor
                         {
-                            name = o.Name,
-                            shape = o.Dimensions,
-                            sizeBytes = GetOutputDataSize(o.Data, o.ElementType)
+                            Name = o.Name,
+                            Shape = o.Dimensions,
+                            SizeBytes = GetOutputDataSize(o.Data, o.ElementType)
                         }).ToList()
                     };
 
-                    var resultJson = JsonSerializer.Serialize(resultPayload, SerializerOptions);
                     await _webRtcPeerService.ReportPartitionCompletedAsync(
                         assignment.SubtaskId,
                         assignment.PartitionId,
-                        resultJson,
+                        partitionResult,
                         cancellationToken);
                 }
 

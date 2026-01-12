@@ -61,16 +61,14 @@ public interface ITaskHubServer
     /// <summary>
     /// Submits the result of a completed subtask.
     /// </summary>
-    /// <param name="subtaskId">ID of the subtask.</param>
-    /// <param name="resultDataJson">JSON-serialized result data.</param>
-    Task SubmitResult(Guid subtaskId, string resultDataJson);
+    /// <param name="result">Strongly-typed result payload.</param>
+    Task SubmitResult(SubtaskResultPayload result);
 
     /// <summary>
     /// Reports that a subtask has failed.
     /// </summary>
-    /// <param name="subtaskId">ID of the subtask.</param>
-    /// <param name="failureDataJson">JSON-serialized failure information.</param>
-    Task FailedResult(Guid subtaskId, string failureDataJson);
+    /// <param name="failure">Strongly-typed failure payload.</param>
+    Task FailedResult(SubtaskFailureResultPayload failure);
 
     #endregion
 
@@ -145,9 +143,8 @@ public interface ITaskHubServer
     /// Reports that a partition has completed execution.
     /// </summary>
     /// <param name="subtaskId">ID of the subtask.</param>
-    /// <param name="partitionId">ID of the partition.</param>
-    /// <param name="resultJson">Optional JSON-serialized result data.</param>
-    Task ReportPartitionCompleted(Guid subtaskId, Guid partitionId, string? resultJson);
+    /// <param name="result">Strongly-typed partition result payload.</param>
+    Task ReportPartitionCompleted(Guid subtaskId, PartitionResultPayload result);
 
     /// <summary>
     /// Reports that a partition has failed.

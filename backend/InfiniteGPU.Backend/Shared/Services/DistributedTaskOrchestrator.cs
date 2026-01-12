@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Task = System.Threading.Tasks.Task;
 using TaskEntity = InfiniteGPU.Backend.Data.Entities.Task;
+using BackendTaskStatus = InfiniteGPU.Backend.Shared.Models.TaskStatus;
 
 namespace InfiniteGPU.Backend.Shared.Services;
 
@@ -312,18 +313,18 @@ public class DistributedTaskOrchestrator
         // Try to get from TaskHub's static DeviceHardwareCapabilities
         if (TaskHub.DeviceHardwareCapabilities.TryGetValue(deviceId, out var capabilities))
         {
-            // Parse hardware capabilities if available
-            var gpuMemory = 8L * 1024 * 1024 * 1024; // Default 8GB
-            var computeCapability = 10_000_000_000_000L; // Default 10 TFLOPS
+            // Use available memory from capabilities
+            var availableMemory = capabilities.TotalRamBytes > 0
+                ? capabilities.TotalRamBytes
+                : 8L * 1024 * 1024 * 1024; // Default 8GB
 
-            if (capabilities.GpuDevices?.Any() == true)
-            {
-                var gpu = capabilities.GpuDevices.First();
-                gpuMemory = (long)(gpu.TotalMemoryGB * 1024 * 1024 * 1024);
-                computeCapability = (long)(gpu.TotalMemoryGB * 1_000_000_000_000); // Rough estimate
-            }
+            // Estimate compute capability from GPU TOPS (tera operations per second)
+            // Convert TOPS to FLOPS (1 TOPS ≈ 1 TFLOPS for typical operations)
+            var computeCapability = capabilities.GpuEstimatedTops.HasValue && capabilities.GpuEstimatedTops.Value > 0
+                ? (long)(capabilities.GpuEstimatedTops.Value * 1_000_000_000_000)
+                : 10_000_000_000_000L; // Default 10 TFLOPS
 
-            return (gpuMemory, computeCapability);
+            return (availableMemory, computeCapability);
         }
 
         // Default values if not available
@@ -545,9 +546,9 @@ public class DistributedTaskOrchestrator
 
         var allSubtasksCompleted = task.Subtasks.All(s => s.Status == SubtaskStatus.Completed);
 
-        if (allSubtasksCompleted && task.Status != TaskStatus.Completed)
+        if (allSubtasksCompleted && task.Status != BackendTaskStatus.Completed)
         {
-            task.Status = TaskStatus.Completed;
+            task.Status = BackendTaskStatus.Completed;
             task.CompletedAt = DateTime.UtcNow;
             task.CompletionPercent = 100;
             task.UpdatedAt = DateTime.UtcNow;

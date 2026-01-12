@@ -186,3 +186,84 @@ public sealed class AvailableSubtasksChangedPayload
     public DateTime TimestampUtc { get; init; }
     public SubtaskDto? Subtask { get; init; }
 }
+
+#region Hub Invocation Payloads
+
+/// <summary>
+/// Payload for submitting subtask execution result.
+/// Used by SubmitResult hub method.
+/// </summary>
+public sealed class SubtaskResultPayload
+{
+    public Guid SubtaskId { get; init; }
+    public DateTimeOffset CompletedAtUtc { get; init; }
+    public SubtaskExecutionMetrics Metrics { get; init; } = new();
+    public IReadOnlyList<SubtaskOutputDescriptor>? Outputs { get; init; }
+}
+
+/// <summary>
+/// Metrics captured during subtask execution.
+/// </summary>
+public sealed class SubtaskExecutionMetrics
+{
+    public double DurationSeconds { get; init; }
+    public string Device { get; init; } = "cpu";
+    public double? MemoryGBytes { get; init; }
+}
+
+/// <summary>
+/// Descriptor for a processed output from subtask execution.
+/// </summary>
+public sealed class SubtaskOutputDescriptor
+{
+    public string Name { get; init; } = string.Empty;
+    public string? PayloadType { get; init; }
+    public object? Value { get; init; }
+    public string? FileUrl { get; init; }
+}
+
+/// <summary>
+/// Payload for reporting subtask execution failure.
+/// Used by FailedResult hub method.
+/// </summary>
+public sealed class SubtaskFailureResultPayload
+{
+    public Guid SubtaskId { get; init; }
+    public DateTimeOffset FailedAtUtc { get; init; }
+    public string Error { get; init; } = string.Empty;
+    public string? StackTrace { get; init; }
+}
+
+/// <summary>
+/// Payload for reporting partition execution completion.
+/// Used by ReportPartitionCompleted hub method.
+/// </summary>
+public sealed class PartitionResultPayload
+{
+    public Guid PartitionId { get; init; }
+    public int PartitionIndex { get; init; }
+    public DateTimeOffset CompletedAtUtc { get; init; }
+    public PartitionExecutionMetrics Metrics { get; init; } = new();
+    public IReadOnlyList<PartitionOutputDescriptor>? Outputs { get; init; }
+}
+
+/// <summary>
+/// Metrics captured during partition execution.
+/// </summary>
+public sealed class PartitionExecutionMetrics
+{
+    public double DurationSeconds { get; init; }
+    public string Device { get; init; } = "cpu";
+}
+
+/// <summary>
+/// Descriptor for an output tensor from partition execution.
+/// </summary>
+public sealed class PartitionOutputDescriptor
+{
+    public string Name { get; init; } = string.Empty;
+    public int[]? Shape { get; init; }
+    public int SizeBytes { get; init; }
+}
+
+#endregion

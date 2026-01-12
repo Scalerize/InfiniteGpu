@@ -325,7 +325,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
             entity.Property(e => e.AssignedProviderId)
                 .HasMaxLength(450);
-            entity.Property(e => e.OnnxSubgraphBlobUri)
+            entity.Property(e => e.OnnxFullModelBlobUri)
                 .HasMaxLength(2048);
             entity.Property(e => e.InputTensorNamesJson)
                 .HasColumnType("nvarchar(max)");

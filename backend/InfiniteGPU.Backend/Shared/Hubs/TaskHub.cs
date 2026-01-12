@@ -8,31 +8,32 @@ using InfiniteGPU.Backend.Features.Subtasks;
 using InfiniteGPU.Backend.Shared.Models;
 using InfiniteGPU.Backend.Shared.Services;
 using InfiniteGPU.Contracts.Hubs;
-using InfiniteGPU.Contracts.Hubs.Payloads;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
-// Aliases for contract types to avoid conflicts with backend types
-using ContractTaskDto = InfiniteGPU.Contracts.Hubs.Payloads.TaskDto;
-using ContractSubtaskDto = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskDto;
-using ContractTaskStatus = InfiniteGPU.Contracts.Hubs.Payloads.TaskStatus;
-using ContractSubtaskStatus = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskStatus;
-using ContractTaskType = InfiniteGPU.Contracts.Hubs.Payloads.TaskType;
-using ContractPartitionStatus = InfiniteGPU.Contracts.Hubs.Payloads.PartitionStatus;
-using ContractWebRtcConnectionState = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcConnectionState;
-using ContractWebRtcSignalingType = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingType;
-using ContractWebRtcSignalingMessage = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingMessage;
-using ContractPartitionAssignment = InfiniteGPU.Contracts.Hubs.Payloads.PartitionAssignment;
-using ContractPartitionReadyNotification = InfiniteGPU.Contracts.Hubs.Payloads.PartitionReadyNotification;
-using ContractTensorTransferProgress = InfiniteGPU.Contracts.Hubs.Payloads.TensorTransferProgress;
-using ContractTurnCredentials = InfiniteGPU.Contracts.Hubs.Payloads.TurnCredentials;
+// Aliases for backend types to use in this file (these take precedence)
+using BackendTaskDto = InfiniteGPU.Backend.Shared.Models.TaskDto;
+using BackendSubtaskDto = InfiniteGPU.Backend.Shared.Models.SubtaskDto;
+
+// Aliases for contract types that are actually needed in this file
 using ContractHardwareCapabilitiesDto = InfiniteGPU.Contracts.Hubs.Payloads.HardwareCapabilitiesDto;
+using ContractTurnCredentials = InfiniteGPU.Contracts.Hubs.Payloads.TurnCredentials;
+
+// Payload types from contracts (no conflicts with backend)
+using SubtaskResultPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskResultPayload;
+using SubtaskFailureResultPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskFailureResultPayload;
+using PartitionResultPayload = InfiniteGPU.Contracts.Hubs.Payloads.PartitionResultPayload;
+using PartitionCompletedPayload = InfiniteGPU.Contracts.Hubs.Payloads.PartitionCompletedPayload;
+using PartitionReadyNotification = InfiniteGPU.Contracts.Hubs.Payloads.PartitionReadyNotification;
+using TensorTransferProgress = InfiniteGPU.Contracts.Hubs.Payloads.TensorTransferProgress;
+using WebRtcSignalingMessage = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingMessage;
+using WebRtcSignalingType = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingType;
 
 namespace InfiniteGPU.Backend.Shared.Hubs;
 
 [Authorize]
-public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
+public class TaskHub : Hub, ITaskHubServer
 {
     private readonly AppDbContext _context;
     private readonly TaskAssignmentService _assignmentService;
@@ -332,19 +333,19 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
         await BroadcastExecutionAcknowledgedAsync(Clients, acknowledgement.Subtask, providerUserId, Context.ConnectionAborted);
     }
 
-    public async Task SubmitResult(Guid subtaskId, string resultDataJson)
+    public async Task SubmitResult(SubtaskResultPayload result)
     {
         var providerUserId = RequireProvider();
 
         _logger.LogInformation(
             "SubmitResult invoked by provider {ProviderId} for subtask {SubtaskId}",
             providerUserId,
-            subtaskId);
+            result.SubtaskId);
 
         var completion = await _assignmentService.CompleteSubtaskAsync(
-            subtaskId,
+            result.SubtaskId,
             providerUserId,
-            resultDataJson,
+            null, // No longer passing raw JSON
             Context.ConnectionAborted);
 
         if (completion is null)
@@ -352,54 +353,48 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
             throw new HubException("Unable to complete subtask for this provider.");
         }
 
-        var resultsPayload = TryDeserializeResults(resultDataJson);
-
         await BroadcastCompletionAsync(
             Clients,
             completion.Subtask,
             providerUserId,
             completion.TaskCompleted,
-            resultsPayload,
+            result, // Pass the strongly-typed payload
             Context.ConnectionAborted);
 
         await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
     }
 
-    public async Task FailedResult(Guid subtaskId, string failureDataJson)
+    public async Task FailedResult(SubtaskFailureResultPayload failure)
     {
         var providerUserId = RequireProvider();
 
         _logger.LogInformation(
             "FailedResult invoked by provider {ProviderId} for subtask {SubtaskId}",
             providerUserId,
-            subtaskId);
+            failure.SubtaskId);
 
-        var failureReason = ExtractFailureReason(failureDataJson);
-
-        var failure = await _assignmentService.FailSubtaskAsync(
-            subtaskId,
+        var failureResult = await _assignmentService.FailSubtaskAsync(
+            failure.SubtaskId,
             providerUserId,
-            failureReason,
+            failure.Error,
             Context.ConnectionAborted);
 
-        if (failure is null)
+        if (failureResult is null)
         {
             throw new HubException("Unable to fail subtask for this provider.");
         }
 
-        var errorPayload = TryDeserializeResults(failureDataJson);
-
         await BroadcastFailureAsync(
             Clients,
-            failure.Subtask,
+            failureResult.Subtask,
             providerUserId,
-            failure.WasReassigned,
-            failure.TaskFailed,
-            errorPayload,
+            failureResult.WasReassigned,
+            failureResult.TaskFailed,
+            failure, // Pass the strongly-typed payload
             Context.ConnectionAborted);
 
         // If subtask was reassigned, try to dispatch it to another provider
-        if (failure.WasReassigned)
+        if (failureResult.WasReassigned)
         {
             await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
         }
@@ -735,23 +730,23 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
     /// <summary>
     /// Reports that a partition has completed execution.
     /// </summary>
-    public async Task ReportPartitionCompleted(Guid subtaskId, Guid partitionId, string? resultJson)
+    public async Task ReportPartitionCompleted(Guid subtaskId, PartitionResultPayload result)
     {
         var providerUserId = RequireProvider();
 
         _logger.LogInformation(
             "Partition {PartitionId} completed for subtask {SubtaskId}",
-            partitionId,
+            result.PartitionId,
             subtaskId);
 
         var partition = await _context.Partitions
             .Include(p => p.Subtask)
             .ThenInclude(s => s.Task)
-            .FirstOrDefaultAsync(p => p.Id == partitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+            .FirstOrDefaultAsync(p => p.Id == result.PartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
 
         if (partition is null)
         {
-            throw new HubException($"Partition {partitionId} not found.");
+            throw new HubException($"Partition {result.PartitionId} not found.");
         }
 
         partition.Status = PartitionStatus.Completed;
@@ -763,15 +758,15 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
         }
         await _context.SaveChangesAsync(Context.ConnectionAborted);
 
-        var payload = new
+        var payload = new PartitionCompletedPayload
         {
             SubtaskId = subtaskId,
-            PartitionId = partitionId,
+            PartitionId = result.PartitionId,
             PartitionIndex = partition.PartitionIndex,
             TotalPartitions = partition.TotalPartitions,
             CompletedAtUtc = partition.CompletedAtUtc,
             DurationSeconds = partition.DurationSeconds,
-            Result = TryDeserializeResults(resultJson)
+            Result = result // Pass the strongly-typed result payload
         };
 
         // Notify task owner
@@ -1767,7 +1762,7 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
         await Task.WhenAll(broadcasts);
     }
 
-    private static SubtaskDto CreateSubtaskDto(Subtask subtask) => SubtaskMapping.CreateDto(subtask, isRequestorView: false);
+    private static BackendSubtaskDto CreateSubtaskDto(Subtask subtask) => SubtaskMapping.CreateDto(subtask, isRequestorView: false);
 
     private static void EnsureTaskLoaded(Subtask subtask)
     {
@@ -2124,11 +2119,11 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
         return sortedDevices;
     }
 
-    public static TaskDto BuildTaskDto(Data.Entities.Task task)
+    public static BackendTaskDto BuildTaskDto(Data.Entities.Task task)
     {
         var isTraining = task.Type == TaskType.Train;
         
-        return new TaskDto
+        return new BackendTaskDto
         {
             Id = task.Id,
             Type = task.Type,
@@ -2136,10 +2131,10 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
             EstimatedCost = task.EstimatedCost,
             FillBindingsViaApi = task.FillBindingsViaApi,
             Inference = !isTraining && (task.InferenceBindings.Any() || task.OutputBindings.Any())
-                ? new TaskDto.InferenceParametersDto
+                ? new BackendTaskDto.InferenceParametersDto
                 {
                     Bindings = task.InferenceBindings
-                        .Select(binding => new TaskDto.InferenceParametersDto.BindingDto
+                        .Select(binding => new BackendTaskDto.InferenceParametersDto.BindingDto
                         {
                             TensorName = binding.TensorName,
                             PayloadType = binding.PayloadType,
@@ -2148,7 +2143,7 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
                         })
                         .ToList(),
                     Outputs = task.OutputBindings
-                        .Select(output => new TaskDto.InferenceParametersDto.OutputBindingDto
+                        .Select(output => new BackendTaskDto.InferenceParametersDto.OutputBindingDto
                         {
                             TensorName = output.TensorName,
                             PayloadType = output.PayloadType,
@@ -2158,10 +2153,10 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
                 }
                 : null,
             Training = isTraining && (task.InferenceBindings.Any() || task.OutputBindings.Any())
-                ? new TaskDto.TrainingParametersDto
+                ? new BackendTaskDto.TrainingParametersDto
                 {
                     Inputs = task.InferenceBindings
-                        .Select(binding => new TaskDto.TrainingParametersDto.TrainingBindingDto
+                        .Select(binding => new BackendTaskDto.TrainingParametersDto.TrainingBindingDto
                         {
                             TensorName = binding.TensorName,
                             PayloadType = binding.PayloadType,
@@ -2170,10 +2165,10 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
                         })
                         .ToList(),
                     Outputs = task.OutputBindings
-                        .Select(output => new TaskDto.TrainingParametersDto.TrainingBindingDto
+                        .Select(output => new BackendTaskDto.TrainingParametersDto.TrainingBindingDto
                         {
                             TensorName = output.TensorName,
-                            PayloadType = output.PayloadType, 
+                            PayloadType = output.PayloadType,
                             FileUrl = output.FileUrl
                         })
                         .ToList()
