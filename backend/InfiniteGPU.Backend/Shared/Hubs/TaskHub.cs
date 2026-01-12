@@ -581,8 +581,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportPartitionReady(Guid subtaskId, Guid partitionId, string[] outputTensorNames, long outputTensorSizeBytes)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogInformation(
             "Partition {PartitionId} ready with outputs [{Outputs}] for subtask {SubtaskId}",
             partitionId,
@@ -639,8 +637,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportPartitionWaitingForInput(Guid subtaskId, Guid partitionId, string[] requiredTensorNames)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogInformation(
             "Partition {PartitionId} waiting for inputs [{Inputs}] for subtask {SubtaskId}",
             partitionId,
@@ -686,8 +682,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportPartitionProgress(Guid subtaskId, Guid partitionId, int progress)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogTrace(
             "Partition {PartitionId} progress {Progress}% for subtask {SubtaskId}",
             partitionId,
@@ -732,8 +726,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportPartitionCompleted(Guid subtaskId, PartitionResultPayload result)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogInformation(
             "Partition {PartitionId} completed for subtask {SubtaskId}",
             result.PartitionId,
@@ -787,8 +779,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportPartitionFailed(Guid subtaskId, Guid partitionId, string failureReason)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogWarning(
             "Partition {PartitionId} failed for subtask {SubtaskId}: {FailureReason}",
             partitionId,
@@ -852,8 +842,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportTensorTransferProgress(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string tensorName, long bytesTransferred, long totalBytes)
     {
-        var providerUserId = RequireProvider();
-
         var progressPercent = totalBytes > 0 ? (int)((bytesTransferred * 100) / totalBytes) : 0;
 
         _logger.LogTrace(
@@ -888,8 +876,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task UpdateNetworkMetrics(Guid subtaskId, Guid partitionId, Guid peerPartitionId, long bandwidthBps, int rttMs)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogDebug(
             "Network metrics for partition {PartitionId} -> {PeerPartitionId}: {BandwidthMbps} Mbps, {RttMs} ms RTT",
             partitionId,
@@ -917,8 +903,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportModelDownloadProgress(Guid subtaskId, Guid partitionId, int progressPercent, long bytesDownloaded, long totalBytes)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogDebug(
             "Model download progress for partition {PartitionId}: {Progress}% ({BytesDownloaded}/{TotalBytes})",
             partitionId,
@@ -971,8 +955,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportPartitioningProgress(Guid subtaskId, Guid partitionId, int progressPercent, int partitionsCreated, int totalPartitions)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogDebug(
             "Partitioning progress for partition {PartitionId}: {Progress}% ({Created}/{Total} partitions)",
             partitionId,
@@ -1020,8 +1002,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportSubgraphDistributionStart(Guid subtaskId, Guid parentPartitionId, Guid[] childPartitionIds, long[] subgraphSizes)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogInformation(
             "Starting subgraph distribution from parent {ParentPartitionId} to {ChildCount} children",
             parentPartitionId,
@@ -1102,8 +1082,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportSubgraphTransferProgress(Guid subtaskId, Guid parentPartitionId, Guid childPartitionId, long bytesTransferred, long totalBytes)
     {
-        var providerUserId = RequireProvider();
-
         var progressPercent = totalBytes > 0 ? (int)((bytesTransferred * 100) / totalBytes) : 0;
 
         _logger.LogTrace(
@@ -1145,8 +1123,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportSubgraphReceived(Guid subtaskId, Guid partitionId, long subgraphSizeBytes, bool isValid)
     {
-        var providerUserId = RequireProvider();
-
         _logger.LogInformation(
             "Subgraph received by partition {PartitionId}: {SizeBytes} bytes, valid={IsValid}",
             partitionId,
@@ -1226,8 +1202,6 @@ public class TaskHub : Hub, ITaskHubServer
     /// </summary>
     public async Task ReportNetworkMetrics(long bandwidthBps, int latencyMs, string? region)
     {
-        var providerUserId = RequireProvider();
-
         if (!ConnectionToDeviceMap.TryGetValue(Context.ConnectionId, out var deviceId))
         {
             throw new HubException("Device not registered.");
