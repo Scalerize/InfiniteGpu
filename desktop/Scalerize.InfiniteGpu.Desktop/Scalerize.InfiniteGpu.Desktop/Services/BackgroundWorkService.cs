@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using InfiniteGPU.Contracts.Hubs;
+using InfiniteGPU.Contracts.Hubs.Payloads;
 using Scalerize.InfiniteGpu.Desktop.Constants;
 using System;
 using System.Collections.Concurrent;
@@ -18,12 +20,19 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 
+// Type aliases to avoid conflicts between contract types and local types
+using ContractExecutionRequestedPayload = InfiniteGPU.Contracts.Hubs.Payloads.ExecutionRequestedPayload;
+using ContractSubtaskDto = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskDto;
+using ContractPartitionAssignment = InfiniteGPU.Contracts.Hubs.Payloads.PartitionAssignment;
+using ContractWebRtcPeerInfo = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcPeerInfo;
+using ContractHardwareCapabilitiesDto = InfiniteGPU.Contracts.Hubs.Payloads.HardwareCapabilitiesDto;
+using ContractSmartPartitionDto = InfiniteGPU.Contracts.Hubs.Payloads.SmartPartitionDto;
+using ContractSubtaskPartitionsReadyPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskPartitionsReadyPayload;
+
 namespace Scalerize.InfiniteGpu.Desktop.Services
 {
     public sealed class BackgroundWorkService : IAsyncDisposable
     {
-        private const string ExecutionRequestedEventName = "OnExecutionRequested";
-        private const string PartitionAssignedEventName = "OnPartitionAssigned";
         private static readonly TimeSpan ConnectionRetryDelay = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan NoTokenBackoff = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan ConnectionStatePollInterval = TimeSpan.FromSeconds(1);
@@ -273,7 +282,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     var npuInfo = _hardwareMetricsService.GetNpuInfo();
                     var memoryInfo = _hardwareMetricsService.GetMemoryInfo();
 
-                    var hardwareCapabilities = new
+                    var hardwareCapabilities = new ContractHardwareCapabilitiesDto
                     {
                         CpuEstimatedTops = cpuInfo.EstimatedTops,
                         GpuEstimatedTops = gpuInfo?.EstimatedTops,
@@ -281,7 +290,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         TotalRamBytes = (long)(memoryInfo.TotalGb.Value * 1024 * 1024 * 1024)
                     };
 
-                    await connection.InvokeAsync("JoinAvailableTasks", string.Empty, "Provider", hardwareCapabilities, cancellationToken).ConfigureAwait(false);
+                    await connection.InvokeAsync(nameof(ITaskHubServer.JoinAvailableTasks), string.Empty, "Provider", hardwareCapabilities, cancellationToken).ConfigureAwait(false);
 
                     while (!cancellationToken.IsCancellationRequested)
                     {
@@ -395,13 +404,13 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
         private void RegisterHubHandlers(HubConnection connection)
         {
-            _executionRequestedSubscription = connection.On<ExecutionRequestedPayload>(ExecutionRequestedEventName, payload => HandleExecutionRequestedAsync(payload));
+            _executionRequestedSubscription = connection.On<ContractExecutionRequestedPayload>(TaskHubEvents.OnExecutionRequested, payload => HandleExecutionRequestedAsync(payload));
             
             // Initialize WebRTC peer service with the hub connection
             _webRtcPeerService.Initialize(connection);
         }
 
-        private Task HandleExecutionRequestedAsync(ExecutionRequestedPayload? payload)
+        private Task HandleExecutionRequestedAsync(ContractExecutionRequestedPayload? payload)
         {
             if (payload?.Subtask is null)
             {
@@ -426,7 +435,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             return writer.WriteAsync(item, token).AsTask();
         }
 
-        private async Task ProcessExecutionRequestAsync(ExecutionRequestedPayload payload, CancellationToken cancellationToken)
+        private async Task ProcessExecutionRequestAsync(ContractExecutionRequestedPayload payload, CancellationToken cancellationToken)
         {
             var subtask = payload.Subtask;
             var authToken = Volatile.Read(ref _authToken);
@@ -450,7 +459,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             {
                 Debug.WriteLine($"[BackgroundWorkService] Subtask {subtask.Id} has direct partition assignment: partition {subtask.MyPartition.PartitionId}");
                 
-                var assignment = ConvertToPartitionAssignment(subtask.MyPartition, subtask);
+                // Use the contract type directly (already a ContractPartitionAssignment)
+                var assignment = subtask.MyPartition;
                 
                 // Initialize input buffer and store assignment
                 _partitionInputBuffers[assignment.PartitionId] = new Dictionary<string, ReceivedTensor>();
@@ -472,8 +482,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             // Standard single-device execution (no partitioning)
             Debug.WriteLine($"[BackgroundWorkService] Subtask {subtask.Id} executing as single-device workload (no partitioning)");
             
-            await connection.InvokeAsync("AcknowledgeExecutionStart", subtask.Id, cancellationToken);
-            await connection.InvokeAsync("ReportProgress", subtask.Id, 5, cancellationToken);
+            await connection.InvokeAsync(nameof(ITaskHubServer.AcknowledgeExecutionStart), subtask.Id, cancellationToken);
+            await connection.InvokeAsync(nameof(ITaskHubServer.ReportProgress), subtask.Id, 5, cancellationToken);
 
             Stopwatch stopwatch = null;
             try
@@ -539,7 +549,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 var resultJson = JsonSerializer.Serialize(resultPayload, SerializerOptions);
 
-                await connection.InvokeAsync("SubmitResult", subtask.Id, resultJson, cancellationToken);
+                await connection.InvokeAsync(nameof(ITaskHubServer.SubmitResult), subtask.Id, resultJson, cancellationToken);
             }
             catch (OperationCanceledException)
             {
@@ -560,7 +570,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 try
                 {
-                    await connection.InvokeAsync("FailedResult", subtask.Id, errorJson, cancellationToken);
+                    await connection.InvokeAsync(nameof(ITaskHubServer.FailedResult), subtask.Id, errorJson, cancellationToken);
                 }
                 catch (Exception submitEx)
                 {
@@ -574,7 +584,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// This device becomes the parent peer responsible for coordinating the distributed execution.
         /// </summary>
         private async Task ProcessDistributedExecutionRequestAsync(
-            ExecutionRequestedPayload payload,
+            ContractExecutionRequestedPayload payload,
             HubConnection connection,
             CancellationToken cancellationToken)
         {
@@ -582,8 +592,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             
             Debug.WriteLine($"[BackgroundWorkService] Starting distributed execution for subtask {subtask.Id}");
             
-            await connection.InvokeAsync("AcknowledgeExecutionStart", subtask.Id, cancellationToken);
-            await connection.InvokeAsync("ReportProgress", subtask.Id, 5, cancellationToken);
+            await connection.InvokeAsync(nameof(ITaskHubServer.AcknowledgeExecutionStart), subtask.Id, cancellationToken);
+            await connection.InvokeAsync(nameof(ITaskHubServer.ReportProgress), subtask.Id, 5, cancellationToken);
             
             try
             {
@@ -603,8 +613,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 {
                     Debug.WriteLine($"[BackgroundWorkService] This device is the parent peer for subtask {subtask.Id}");
                     
-                    // Build PartitionAssignment from SmartPartitionPayload
-                    var assignment = new PartitionAssignment
+                    // Build PartitionAssignment from SmartPartitionDto (contract type)
+                    var assignment = new ContractPartitionAssignment
                     {
                         PartitionId = myPartition.Id,
                         SubtaskId = subtask.Id,
@@ -612,8 +622,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         PartitionIndex = myPartition.PartitionIndex,
                         TotalPartitions = subtask.PartitionCount,
                         OnnxSubgraphBlobUri = myPartition.OnnxSubgraphBlobUri,
-                        InputTensorNames = myPartition.InputTensorNames,
-                        OutputTensorNames = myPartition.OutputTensorNames,
+                        InputTensorNames = myPartition.InputTensorNames.ToList(),
+                        OutputTensorNames = myPartition.OutputTensorNames.ToList(),
                         IsParentPeer = true,
                         OnnxFullModelBlobUri = myPartition.OnnxFullModelBlobUri,
                         ParametersJson = subtask.ParametersJson,
@@ -649,7 +659,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 try
                 {
-                    await connection.InvokeAsync("FailedResult", subtask.Id, errorJson, cancellationToken);
+                    await connection.InvokeAsync(nameof(ITaskHubServer.FailedResult), subtask.Id, errorJson, cancellationToken);
                 }
                 catch (Exception submitEx)
                 {
@@ -661,8 +671,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Builds WebRtcPeerInfo list for child peers from partition list.
         /// </summary>
-        private static List<WebRtcPeerInfo>? BuildChildPeersFromPartitions(
-            List<SmartPartitionPayload>? partitions,
+        private static List<ContractWebRtcPeerInfo>? BuildChildPeersFromPartitions(
+            IReadOnlyList<ContractSmartPartitionDto>? partitions,
             int parentPartitionIndex)
         {
             if (partitions is null || partitions.Count == 0)
@@ -672,7 +682,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             
             return partitions
                 .Where(p => p.PartitionIndex != parentPartitionIndex && !p.IsParentPeer)
-                .Select(p => new WebRtcPeerInfo
+                .Select(p => new ContractWebRtcPeerInfo
                 {
                     PartitionId = p.Id,
                     DeviceId = p.AssignedDeviceId ?? Guid.Empty,
@@ -682,60 +692,15 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 })
                 .ToList();
         }
-        
-        /// <summary>
-        /// Converts a PartitionAssignmentPayload to a PartitionAssignment.
-        /// </summary>
-        private PartitionAssignment ConvertToPartitionAssignment(
-            PartitionAssignmentPayload payload,
-            SubtaskPayload subtask)
+
+        private static Uri? ResolveModelUri(ContractSubtaskDto subtask)
         {
-            return new PartitionAssignment
+            if (TryCreateUri(subtask.OnnxModel?.ReadUri, out var readUri))
             {
-                PartitionId = payload.PartitionId,
-                SubtaskId = payload.SubtaskId,
-                TaskId = payload.TaskId,
-                PartitionIndex = payload.PartitionIndex,
-                TotalPartitions = payload.TotalPartitions,
-                OnnxSubgraphBlobUri = payload.OnnxSubgraphBlobUri ?? string.Empty,
-                InputTensorNames = payload.InputTensorNames,
-                OutputTensorNames = payload.OutputTensorNames,
-                ParametersJson = payload.ParametersJson ?? subtask.ParametersJson,
-                IsParentPeer = payload.IsParentPeer,
-                OnnxFullModelBlobUri = payload.OnnxFullModelBlobUri,
-                UpstreamPeer = payload.UpstreamPeer is not null ? new WebRtcPeerInfo
-                {
-                    PartitionId = payload.UpstreamPeer.PartitionId,
-                    DeviceId = payload.UpstreamPeer.DeviceId,
-                    DeviceConnectionId = payload.UpstreamPeer.DeviceConnectionId,
-                    PartitionIndex = payload.UpstreamPeer.PartitionIndex,
-                    IsInitiator = payload.UpstreamPeer.IsInitiator
-                } : null,
-                DownstreamPeer = payload.DownstreamPeer is not null ? new WebRtcPeerInfo
-                {
-                    PartitionId = payload.DownstreamPeer.PartitionId,
-                    DeviceId = payload.DownstreamPeer.DeviceId,
-                    DeviceConnectionId = payload.DownstreamPeer.DeviceConnectionId,
-                    PartitionIndex = payload.DownstreamPeer.PartitionIndex,
-                    IsInitiator = payload.DownstreamPeer.IsInitiator
-                } : null,
-                ParentPeer = payload.ParentPeer is not null ? new WebRtcPeerInfo
-                {
-                    PartitionId = payload.ParentPeer.PartitionId,
-                    DeviceId = payload.ParentPeer.DeviceId,
-                    DeviceConnectionId = payload.ParentPeer.DeviceConnectionId,
-                    PartitionIndex = payload.ParentPeer.PartitionIndex,
-                    IsInitiator = payload.ParentPeer.IsInitiator
-                } : null,
-                ChildPeers = payload.ChildPeers?.Select(c => new WebRtcPeerInfo
-                {
-                    PartitionId = c.PartitionId,
-                    DeviceId = c.DeviceId,
-                    DeviceConnectionId = c.DeviceConnectionId,
-                    PartitionIndex = c.PartitionIndex,
-                    IsInitiator = c.IsInitiator
-                }).ToList()
-            };
+                return readUri;
+            }
+
+            return null;
         }
 
         private async Task<HubConnection> WaitForActiveConnectionAsync(CancellationToken cancellationToken)
@@ -849,16 +814,6 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             throw new InvalidOperationException($"Invalid URI: {uriString}");
         }
 
-        private static Uri? ResolveModelUri(SubtaskPayload subtask)
-        {
-            if (TryCreateUri(subtask.OnnxModel?.ReadUri, out var readUri))
-            {
-                return readUri;
-            }
-
-            return null;
-        }
-
         private static bool TryCreateUri(string? value, out Uri? uri)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -899,129 +854,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             return client;
         }
 
-        private sealed record ExecutionQueueItem(ExecutionRequestedPayload Payload);
-
-        private sealed class ExecutionRequestedPayload
-        {
-            public SubtaskPayload Subtask { get; init; } = new();
-            public string ProviderUserId { get; init; } = string.Empty;
-            public DateTime RequestedAtUtc { get; init; }
-        }
-
-        private sealed class SubtaskPayload
-        {
-            public Guid Id { get; init; }
-            public Guid TaskId { get; init; }
-            public string ParametersJson { get; init; } = "{}";
-            public ExecutionSpecPayload? ExecutionSpec { get; init; }
-            public ExecutionStatePayload? ExecutionState { get; init; }
-            public OnnxModelPayload? OnnxModel { get; init; }
-            
-            // Smart partitioning support
-            public bool RequiresPartitioning { get; init; }
-            public int PartitionCount { get; init; }
-            public List<SmartPartitionPayload>? Partitions { get; init; }
-            
-            /// <summary>
-            /// Information about this device's partition assignment when RequiresPartitioning is true.
-            /// </summary>
-            public PartitionAssignmentPayload? MyPartition { get; init; }
-        }
-
-        private sealed class ExecutionSpecPayload
-        {
-            public string? OnnxModelUrl { get; init; }
-            public string? OptimizerModelUrl { get; init; }
-            public string? CheckpointUrl { get; init; }
-            public string? EvalModelUrl { get; init; }
-            public int TaskType { get; init; }
-        }
-
-        private sealed class ExecutionStatePayload
-        {
-            public IDictionary<string, JsonElement>? ExtendedMetadata { get; init; }
-        }
-
-        private sealed class OnnxModelPayload
-        {
-            public string? ResolvedReadUri { get; init; }
-            public string? ReadUri { get; init; }
-        }
-        
-        /// <summary>
-        /// Represents a smart partition from the backend SubtaskDto.
-        /// </summary>
-        private sealed class SmartPartitionPayload
-        {
-            public Guid Id { get; init; }
-            public Guid SubtaskId { get; init; }
-            public int PartitionIndex { get; init; }
-            public string OnnxSubgraphBlobUri { get; init; } = string.Empty;
-            public List<string> InputTensorNames { get; init; } = new();
-            public List<string> OutputTensorNames { get; init; } = new();
-            public string Status { get; init; } = string.Empty;
-            public int Progress { get; init; }
-            public Guid? AssignedDeviceId { get; init; }
-            public string? AssignedDeviceConnectionId { get; init; }
-            public string? AssignedToUserId { get; init; }
-            public DateTime CreatedAtUtc { get; init; }
-            public DateTime? AssignedAtUtc { get; init; }
-            public DateTime? StartedAtUtc { get; init; }
-            public DateTime? CompletedAtUtc { get; init; }
-            public DateTime? FailedAtUtc { get; init; }
-            public string? FailureReason { get; init; }
-            public long EstimatedMemoryMb { get; init; }
-            public double EstimatedComputeTflops { get; init; }
-            public Guid? UpstreamPartitionId { get; init; }
-            public Guid? DownstreamPartitionId { get; init; }
-            
-            // Parent peer fields
-            public bool IsParentPeer { get; init; }
-            public string? OnnxFullModelBlobUri { get; init; }
-        }
-        
-        /// <summary>
-        /// Information about this device's specific partition assignment.
-        /// Sent by backend when this device is assigned to execute a partition.
-        /// </summary>
-        private sealed class PartitionAssignmentPayload
-        {
-            public Guid PartitionId { get; init; }
-            public Guid SubtaskId { get; init; }
-            public Guid TaskId { get; init; }
-            public int PartitionIndex { get; init; }
-            public int TotalPartitions { get; init; }
-            public string? OnnxSubgraphBlobUri { get; init; }
-            public List<string> InputTensorNames { get; init; } = new();
-            public List<string> OutputTensorNames { get; init; } = new();
-            public string? ParametersJson { get; init; }
-            
-            // Parent peer architecture
-            public bool IsParentPeer { get; init; }
-            public string? OnnxFullModelBlobUri { get; init; }
-            
-            // Peer connection info
-            public WebRtcPeerInfoPayload? UpstreamPeer { get; init; }
-            public WebRtcPeerInfoPayload? DownstreamPeer { get; init; }
-            public WebRtcPeerInfoPayload? ParentPeer { get; init; }
-            public List<WebRtcPeerInfoPayload>? ChildPeers { get; init; }
-        }
-        
-        /// <summary>
-        /// WebRTC peer info from backend.
-        /// </summary>
-        private sealed class WebRtcPeerInfoPayload
-        {
-            public Guid PartitionId { get; init; }
-            public Guid DeviceId { get; init; }
-            public string DeviceConnectionId { get; init; } = string.Empty;
-            public int PartitionIndex { get; init; }
-            public bool IsInitiator { get; init; }
-        }
+        private sealed record ExecutionQueueItem(ContractExecutionRequestedPayload Payload);
 
         #region Partition Execution
 
-        private sealed record PartitionExecutionItem(PartitionAssignment Assignment, Dictionary<string, ReceivedTensor>? InputTensors = null);
+        private sealed record PartitionExecutionItem(ContractPartitionAssignment Assignment, Dictionary<string, ReceivedTensor>? InputTensors = null);
 
         private sealed class ReceivedTensor
         {
@@ -1118,7 +955,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         }
         
         // Store active partition assignments
-        private readonly ConcurrentDictionary<Guid, PartitionAssignment> _activeAssignments = new();
+        private readonly ConcurrentDictionary<Guid, ContractPartitionAssignment> _activeAssignments = new();
         
         // Store received subgraphs
         private readonly ConcurrentDictionary<Guid, byte[]> _receivedSubgraphs = new();
@@ -1203,7 +1040,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Parent peer workflow: download full model, partition it, distribute subgraphs to children.
         /// </summary>
-        private async Task ProcessParentPeerAssignmentAsync(PartitionAssignment assignment, CancellationToken cancellationToken)
+        private async Task ProcessParentPeerAssignmentAsync(ContractPartitionAssignment assignment, CancellationToken cancellationToken)
         {
             var connection = await WaitForActiveConnectionAsync(cancellationToken);
             
@@ -1218,22 +1055,22 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 }
                 
                 Debug.WriteLine($"[BackgroundWorkService] Parent peer downloading full model from {assignment.OnnxFullModelBlobUri}");
-                await connection.InvokeAsync("ReportModelDownloadProgress", assignment.SubtaskId, assignment.PartitionId, 0, 0L, 0L, cancellationToken);
+                await connection.InvokeAsync(nameof(ITaskHubServer.ReportModelDownloadProgress), assignment.SubtaskId, assignment.PartitionId, 0, 0L, 0L, cancellationToken);
                 
                 var fullModelBytes = await DownloadModelAsync(assignment.OnnxFullModelBlobUri, cancellationToken);
                 
-                await connection.InvokeAsync("ReportModelDownloadProgress", assignment.SubtaskId, assignment.PartitionId, 100, fullModelBytes.LongLength, fullModelBytes.LongLength, cancellationToken);
+                await connection.InvokeAsync(nameof(ITaskHubServer.ReportModelDownloadProgress), assignment.SubtaskId, assignment.PartitionId, 100, fullModelBytes.LongLength, fullModelBytes.LongLength, cancellationToken);
                 Debug.WriteLine($"[BackgroundWorkService] Parent peer downloaded model: {fullModelBytes.Length} bytes");
                 
                 // Step 2: Partition the model using OnnxPartitionerService
                 var totalPartitions = assignment.TotalPartitions;
                 Debug.WriteLine($"[BackgroundWorkService] Parent peer partitioning model into {totalPartitions} partitions");
                 
-                await connection.InvokeAsync("ReportPartitioningProgress", assignment.SubtaskId, assignment.PartitionId, 0, 0, totalPartitions, cancellationToken);
+                await connection.InvokeAsync(nameof(ITaskHubServer.ReportPartitioningProgress), assignment.SubtaskId, assignment.PartitionId, 0, 0, totalPartitions, cancellationToken);
                 
                 var subgraphs = await _onnxPartitionerService.PartitionModelAsync(fullModelBytes, totalPartitions, cancellationToken);
                 
-                await connection.InvokeAsync("ReportPartitioningProgress", assignment.SubtaskId, assignment.PartitionId, 100, totalPartitions, totalPartitions, cancellationToken);
+                await connection.InvokeAsync(nameof(ITaskHubServer.ReportPartitioningProgress), assignment.SubtaskId, assignment.PartitionId, 100, totalPartitions, totalPartitions, cancellationToken);
                 Debug.WriteLine($"[BackgroundWorkService] Parent peer created {subgraphs.Count} subgraphs");
                 
                 // Step 3: Distribute subgraphs to child peers via WebRTC
@@ -1246,7 +1083,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         subgraphSizes[i] = subgraphs[i].SubgraphBytes.Length;
                     }
                     
-                    await connection.InvokeAsync("ReportSubgraphDistributionStart",
+                    await connection.InvokeAsync(nameof(ITaskHubServer.ReportSubgraphDistributionStart),
                         assignment.SubtaskId,
                         assignment.PartitionId,
                         childPartitionIds,

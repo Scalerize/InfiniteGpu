@@ -1,11 +1,23 @@
 using Microsoft.AspNetCore.SignalR.Client;
+using InfiniteGPU.Contracts.Hubs;
+using InfiniteGPU.Contracts.Hubs.Payloads;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+
+// Type aliases to avoid conflicts with local event args
+using ContractPartitionAssignment = InfiniteGPU.Contracts.Hubs.Payloads.PartitionAssignment;
+using ContractWebRtcPeerInfo = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcPeerInfo;
+using ContractWebRtcSignalingMessage = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingMessage;
+using ContractPartitionReadyNotification = InfiniteGPU.Contracts.Hubs.Payloads.PartitionReadyNotification;
+using ContractSubtaskPartitionsReadyPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskPartitionsReadyPayload;
+using ContractSubgraphDistributionStartPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubgraphDistributionStartPayload;
+using ContractSubgraphTransferProgressPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubgraphTransferProgressPayload;
 
 namespace Scalerize.InfiniteGpu.Desktop.Services
 {
@@ -21,20 +33,10 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
     /// </remarks>
     public sealed class WebRtcPeerService : IAsyncDisposable
     {
-        private const string WebRtcOfferEvent = "OnWebRtcOffer";
-        private const string WebRtcAnswerEvent = "OnWebRtcAnswer";
-        private const string WebRtcIceCandidateEvent = "OnWebRtcIceCandidate";
-        private const string PartitionAssignedEvent = "OnPartitionAssigned";
-        private const string PartitionReadyEvent = "OnPartitionReady";
-        private const string SubtaskPartitionsReadyEvent = "OnSubtaskPartitionsReady";
-        private const string SubgraphDistributionStartEvent = "OnSubgraphDistributionStart";
-        private const string SubgraphTransferProgressEvent = "OnSubgraphTransferProgress";
-        private const string SubgraphReceivedEvent = "OnSubgraphReceived";
-
         private readonly TensorSerializer _tensorSerializer;
         private readonly OnnxSubgraphSerializer _subgraphSerializer;
         private readonly ConcurrentDictionary<Guid, PeerConnection> _peerConnections = new();
-        private readonly ConcurrentDictionary<Guid, PartitionAssignment> _partitionAssignments = new();
+        private readonly ConcurrentDictionary<Guid, ContractPartitionAssignment> _partitionAssignments = new();
         private readonly ConcurrentDictionary<Guid, TensorReceiveBuffer> _tensorReceiveBuffers = new();
         
         private HubConnection? _hubConnection;
@@ -75,35 +77,35 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         {
             if (_hubConnection is null) return;
 
-            _offerSubscription = _hubConnection.On<WebRtcSignalingMessage>(
-                WebRtcOfferEvent, HandleWebRtcOfferAsync);
+            _offerSubscription = _hubConnection.On<ContractWebRtcSignalingMessage>(
+                TaskHubEvents.OnWebRtcOffer, HandleWebRtcOfferAsync);
 
-            _answerSubscription = _hubConnection.On<WebRtcSignalingMessage>(
-                WebRtcAnswerEvent, HandleWebRtcAnswerAsync);
+            _answerSubscription = _hubConnection.On<ContractWebRtcSignalingMessage>(
+                TaskHubEvents.OnWebRtcAnswer, HandleWebRtcAnswerAsync);
 
-            _iceCandidateSubscription = _hubConnection.On<WebRtcSignalingMessage>(
-                WebRtcIceCandidateEvent, HandleWebRtcIceCandidateAsync);
+            _iceCandidateSubscription = _hubConnection.On<ContractWebRtcSignalingMessage>(
+                TaskHubEvents.OnWebRtcIceCandidate, HandleWebRtcIceCandidateAsync);
 
-            _partitionAssignedSubscription = _hubConnection.On<PartitionAssignment>(
-                PartitionAssignedEvent, HandlePartitionAssignedAsync);
+            _partitionAssignedSubscription = _hubConnection.On<ContractPartitionAssignment>(
+                TaskHubEvents.OnPartitionAssigned, HandlePartitionAssignedAsync);
 
-            _partitionReadySubscription = _hubConnection.On<PartitionReadyNotification>(
-                PartitionReadyEvent, HandlePartitionReadyAsync);
+            _partitionReadySubscription = _hubConnection.On<ContractPartitionReadyNotification>(
+                TaskHubEvents.OnPartitionReady, HandlePartitionReadyAsync);
 
-            _partitionsReadySubscription = _hubConnection.On<PartitionsReadyNotification>(
-                SubtaskPartitionsReadyEvent, HandlePartitionsReadyAsync);
+            _partitionsReadySubscription = _hubConnection.On<ContractSubtaskPartitionsReadyPayload>(
+                TaskHubEvents.OnSubtaskPartitionsReady, HandlePartitionsReadyAsync);
                 
-            _subgraphDistributionStartSubscription = _hubConnection.On<SubgraphDistributionStartNotification>(
-                SubgraphDistributionStartEvent, HandleSubgraphDistributionStartAsync);
+            _subgraphDistributionStartSubscription = _hubConnection.On<ContractSubgraphDistributionStartPayload>(
+                TaskHubEvents.OnSubgraphDistributionStart, HandleSubgraphDistributionStartAsync);
                 
-            _subgraphTransferProgressSubscription = _hubConnection.On<SubgraphTransferProgressNotification>(
-                SubgraphTransferProgressEvent, HandleSubgraphTransferProgressAsync);
+            _subgraphTransferProgressSubscription = _hubConnection.On<ContractSubgraphTransferProgressPayload>(
+                TaskHubEvents.OnSubgraphTransferProgress, HandleSubgraphTransferProgressAsync);
         }
 
         /// <summary>
         /// Handles incoming WebRTC offer and creates an answer.
         /// </summary>
-        private async Task HandleWebRtcOfferAsync(WebRtcSignalingMessage message)
+        private async Task HandleWebRtcOfferAsync(ContractWebRtcSignalingMessage message)
         {
             Debug.WriteLine($"[WebRtcPeerService] Received offer from partition {message.FromPartitionId}");
 
@@ -139,7 +141,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 if (_hubConnection is not null)
                 {
                     await _hubConnection.InvokeAsync(
-                        "SendWebRtcAnswer",
+                        nameof(ITaskHubServer.SendWebRtcAnswer),
                         message.SubtaskId,
                         message.ToPartitionId,    // We are the receiver, so ToPartitionId is our local partition
                         message.FromPartitionId,   // Send answer back to the initiator
@@ -161,7 +163,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles incoming WebRTC answer.
         /// </summary>
-        private async Task HandleWebRtcAnswerAsync(WebRtcSignalingMessage message)
+        private async Task HandleWebRtcAnswerAsync(ContractWebRtcSignalingMessage message)
         {
             Debug.WriteLine($"[WebRtcPeerService] Received answer from partition {message.FromPartitionId}");
 
@@ -189,7 +191,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles incoming ICE candidates.
         /// </summary>
-        private Task HandleWebRtcIceCandidateAsync(WebRtcSignalingMessage message)
+        private Task HandleWebRtcIceCandidateAsync(ContractWebRtcSignalingMessage message)
         {
             Debug.WriteLine($"[WebRtcPeerService] Received ICE candidate from partition {message.FromPartitionId}");
 
@@ -202,7 +204,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles partition assignment notification.
         /// </summary>
-        private async Task HandlePartitionAssignedAsync(PartitionAssignment assignment)
+        private async Task HandlePartitionAssignedAsync(ContractPartitionAssignment assignment)
         {
             Debug.WriteLine($"[WebRtcPeerService] Partition assigned: {assignment.PartitionId} (index {assignment.PartitionIndex}/{assignment.TotalPartitions})");
 
@@ -221,7 +223,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles partition ready notification (upstream partition has output ready).
         /// </summary>
-        private Task HandlePartitionReadyAsync(PartitionReadyNotification notification)
+        private Task HandlePartitionReadyAsync(ContractPartitionReadyNotification notification)
         {
             Debug.WriteLine($"[WebRtcPeerService] Partition ready: {notification.PartitionId} with outputs: {string.Join(", ", notification.OutputTensorNames)}");
 
@@ -232,7 +234,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles notification that all partitions are ready for execution.
         /// </summary>
-        private Task HandlePartitionsReadyAsync(PartitionsReadyNotification notification)
+        private Task HandlePartitionsReadyAsync(ContractSubtaskPartitionsReadyPayload notification)
         {
             Debug.WriteLine($"[WebRtcPeerService] All partitions ready for subtask {notification.SubtaskId}");
 
@@ -243,7 +245,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles notification that subgraph distribution is starting from parent peer.
         /// </summary>
-        private Task HandleSubgraphDistributionStartAsync(SubgraphDistributionStartNotification notification)
+        private Task HandleSubgraphDistributionStartAsync(ContractSubgraphDistributionStartPayload notification)
         {
             Debug.WriteLine($"[WebRtcPeerService] Subgraph distribution starting for partition {notification.ChildPartitionId}, expected size: {notification.ExpectedSubgraphSizeBytes} bytes");
             
@@ -267,7 +269,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Handles subgraph transfer progress notification.
         /// </summary>
-        private Task HandleSubgraphTransferProgressAsync(SubgraphTransferProgressNotification notification)
+        private Task HandleSubgraphTransferProgressAsync(ContractSubgraphTransferProgressPayload notification)
         {
             Debug.WriteLine($"[WebRtcPeerService] Subgraph transfer progress for partition {notification.ToPartitionId}: {notification.ProgressPercent}%");
             return Task.CompletedTask;
@@ -320,7 +322,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 // Report transfer complete
                 await _hubConnection.InvokeAsync(
-                    "ReportSubgraphTransferProgress",
+                    nameof(ITaskHubServer.ReportSubgraphTransferProgress),
                     subtaskId,
                     localPartitionId,
                     targetPartitionId,
@@ -348,7 +350,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         {
             // Send metadata first
             var metadataBytes = _subgraphSerializer.SerializeMetadata(metadata);
-            // In real implementation: peerConnection.DataChannel.Send(metadataBytes);
+            peerConnection.DataChannel.Send(metadataBytes);
 
             // Send chunks
             foreach (var chunk in _subgraphSerializer.CreateChunks(subgraphBytes, metadata.SubtaskId, metadata.PartitionId))
@@ -356,7 +358,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 cancellationToken.ThrowIfCancellationRequested();
                 
                 var chunkBytes = _subgraphSerializer.SerializeChunk(chunk);
-                // In real implementation: peerConnection.DataChannel.Send(chunkBytes);
+                peerConnection.DataChannel.Send(chunkBytes);
                 
                 await Task.Delay(1, cancellationToken); // Small delay to avoid overwhelming
             }
@@ -380,7 +382,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             var metadataBase64 = Convert.ToBase64String(metadataBytes);
             
             await _hubConnection.InvokeAsync(
-                "RelaySubgraphMetadata",
+                nameof(ITaskHubServer.RelaySubgraphMetadata),
                 subtaskId,
                 localPartitionId,
                 targetPartitionId,
@@ -400,7 +402,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 var chunkBase64 = Convert.ToBase64String(chunkBytes);
 
                 await _hubConnection.InvokeAsync(
-                    "RelaySubgraphChunk",
+                    nameof(ITaskHubServer.RelaySubgraphChunk),
                     subtaskId,
                     localPartitionId,
                     targetPartitionId,
@@ -416,7 +418,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 {
                     var progress = (sentChunks * subgraphBytes.Length) / totalChunks;
                     await _hubConnection.InvokeAsync(
-                        "ReportSubgraphTransferProgress",
+                        nameof(ITaskHubServer.ReportSubgraphTransferProgress),
                         subtaskId,
                         localPartitionId,
                         targetPartitionId,
@@ -478,7 +480,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         /// <summary>
         /// Initiates a WebRTC connection with a peer partition.
         /// </summary>
-        private async Task InitiateConnectionAsync(Guid subtaskId, Guid localPartitionId, WebRtcPeerInfo peerInfo)
+        private async Task InitiateConnectionAsync(Guid subtaskId, Guid localPartitionId, ContractWebRtcPeerInfo peerInfo)
         {
             Debug.WriteLine($"[WebRtcPeerService] Initiating connection from {localPartitionId} to {peerInfo.PartitionId}");
 
@@ -513,7 +515,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 if (_hubConnection is not null)
                 {
                     await _hubConnection.InvokeAsync(
-                        "SendWebRtcOffer",
+                        nameof(ITaskHubServer.SendWebRtcOffer),
                         subtaskId,
                         localPartitionId,
                         peerInfo.PartitionId,
@@ -540,7 +542,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             try
             {
                 await _hubConnection.InvokeAsync(
-                    "NotifyWebRtcConnected",
+                    nameof(ITaskHubServer.NotifyWebRtcConnected),
                     subtaskId,
                     localPartitionId,
                     peerPartitionId,
@@ -642,7 +644,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 // Send chunk via SignalR
                 await _hubConnection.InvokeAsync(
-                    "RelayTensorChunk",
+                    nameof(ITaskHubServer.RelayTensorChunk),
                     subtaskId,
                     localPartitionId,
                     targetPartitionId,
@@ -680,7 +682,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             try
             {
                 await _hubConnection.InvokeAsync(
-                    "ReportTensorTransferProgress",
+                    nameof(ITaskHubServer.ReportTensorTransferProgress),
                     subtaskId,
                     fromPartitionId,
                     toPartitionId,
@@ -710,7 +712,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             try
             {
                 await _hubConnection.InvokeAsync(
-                    "ReportPartitionReady",
+                    nameof(ITaskHubServer.ReportPartitionReady),
                     subtaskId,
                     partitionId,
                     outputTensorNames,
@@ -739,7 +741,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             try
             {
                 await _hubConnection.InvokeAsync(
-                    "ReportPartitionCompleted",
+                    nameof(ITaskHubServer.ReportPartitionCompleted),
                     subtaskId,
                     partitionId,
                     resultJson,
@@ -767,7 +769,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             try
             {
                 await _hubConnection.InvokeAsync(
-                    "ReportPartitionFailed",
+                    nameof(ITaskHubServer.ReportPartitionFailed),
                     subtaskId,
                     partitionId,
                     failureReason,
@@ -795,7 +797,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             try
             {
                 await _hubConnection.InvokeAsync(
-                    "ReportPartitionProgress",
+                    nameof(ITaskHubServer.ReportPartitionProgress),
                     subtaskId,
                     partitionId,
                     progress,
@@ -922,16 +924,23 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
     #region Event Args and DTOs
 
+    /// <summary>
+    /// Event args for when a partition is assigned to this device.
+    /// Uses the shared contract PartitionAssignment type.
+    /// </summary>
     public sealed class PartitionAssignedEventArgs : EventArgs
     {
-        public PartitionAssignment Assignment { get; }
+        public ContractPartitionAssignment Assignment { get; }
 
-        public PartitionAssignedEventArgs(PartitionAssignment assignment)
+        public PartitionAssignedEventArgs(ContractPartitionAssignment assignment)
         {
             Assignment = assignment;
         }
     }
 
+    /// <summary>
+    /// Event args for when a tensor is received from another partition.
+    /// </summary>
     public sealed class TensorReceivedEventArgs : EventArgs
     {
         public Guid SubtaskId { get; init; }
@@ -942,132 +951,32 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         public byte[] Data { get; init; } = Array.Empty<byte>();
     }
 
+    /// <summary>
+    /// Event args for when all subtask partitions are ready.
+    /// Uses the shared contract SubtaskPartitionsReadyPayload type.
+    /// </summary>
     public sealed class PartitionsReadyEventArgs : EventArgs
     {
-        public PartitionsReadyNotification Notification { get; }
+        public ContractSubtaskPartitionsReadyPayload Notification { get; }
 
-        public PartitionsReadyEventArgs(PartitionsReadyNotification notification)
+        public PartitionsReadyEventArgs(ContractSubtaskPartitionsReadyPayload notification)
         {
             Notification = notification;
         }
     }
 
+    /// <summary>
+    /// Event args for when a partition is ready with output.
+    /// Uses the shared contract PartitionReadyNotification type.
+    /// </summary>
     public sealed class PartitionReadyEventArgs : EventArgs
     {
-        public PartitionReadyNotification Notification { get; }
+        public ContractPartitionReadyNotification Notification { get; }
 
-        public PartitionReadyEventArgs(PartitionReadyNotification notification)
+        public PartitionReadyEventArgs(ContractPartitionReadyNotification notification)
         {
             Notification = notification;
         }
-    }
-
-    public sealed class PartitionAssignment
-    {
-        public Guid PartitionId { get; init; }
-        public Guid SubtaskId { get; init; }
-        public Guid TaskId { get; init; }
-        public int PartitionIndex { get; init; }
-        public int TotalPartitions { get; init; }
-        public string OnnxSubgraphBlobUri { get; init; } = string.Empty;
-        public List<string> InputTensorNames { get; init; } = new();
-        public List<string> OutputTensorNames { get; init; } = new();
-        public string? ExecutionConfigJson { get; init; }
-        public WebRtcPeerInfo? UpstreamPeer { get; init; }
-        public WebRtcPeerInfo? DownstreamPeer { get; init; }
-        
-        /// <summary>
-        /// JSON parameters containing input tensor bindings for the first partition.
-        /// Used by InputParsingService to build NamedOnnxValue inputs.
-        /// </summary>
-        public string? ParametersJson { get; init; }
-        
-        // Parent peer architecture fields
-        /// <summary>
-        /// True if this device is the parent peer responsible for downloading
-        /// the full model and distributing subgraphs.
-        /// </summary>
-        public bool IsParentPeer { get; init; }
-        
-        /// <summary>
-        /// URI to the full ONNX model in blob storage (only set for parent peer).
-        /// </summary>
-        public string? OnnxFullModelBlobUri { get; init; }
-        
-        /// <summary>
-        /// Information about the parent peer (for child peers to receive subgraphs).
-        /// </summary>
-        public WebRtcPeerInfo? ParentPeer { get; init; }
-        
-        /// <summary>
-        /// List of child peers (for parent peer to distribute subgraphs to).
-        /// </summary>
-        public List<WebRtcPeerInfo>? ChildPeers { get; init; }
-    }
-
-    public sealed class WebRtcPeerInfo
-    {
-        public Guid PartitionId { get; init; }
-        public Guid DeviceId { get; init; }
-        public string DeviceConnectionId { get; init; } = string.Empty;
-        public int PartitionIndex { get; init; }
-        public bool IsInitiator { get; init; }
-    }
-
-    public sealed class WebRtcSignalingMessage
-    {
-        public Guid SubtaskId { get; init; }
-        public Guid FromPartitionId { get; init; }
-        public Guid ToPartitionId { get; init; }
-        public string Type { get; init; } = string.Empty;
-        public string Payload { get; init; } = string.Empty;
-        public DateTime TimestampUtc { get; init; }
-    }
-
-    public sealed class PartitionReadyNotification
-    {
-        public Guid SubtaskId { get; init; }
-        public Guid PartitionId { get; init; }
-        public int PartitionIndex { get; init; }
-        public List<string> OutputTensorNames { get; init; } = new();
-        public long OutputTensorSizeBytes { get; init; }
-        public DateTime CompletedAtUtc { get; init; }
-    }
-
-    public sealed class PartitionsReadyNotification
-    {
-        public Guid SubtaskId { get; init; }
-        public Guid PartitionId { get; init; }
-        public int PartitionIndex { get; init; }
-        public int TotalPartitions { get; init; }
-        public DateTime TimestampUtc { get; init; }
-    }
-
-    /// <summary>
-    /// Notification sent to child peers when parent peer starts distributing subgraphs.
-    /// </summary>
-    public sealed class SubgraphDistributionStartNotification
-    {
-        public Guid SubtaskId { get; init; }
-        public Guid ParentPartitionId { get; init; }
-        public Guid ChildPartitionId { get; init; }
-        public int ChildPartitionIndex { get; init; }
-        public long ExpectedSubgraphSizeBytes { get; init; }
-        public DateTime TimestampUtc { get; init; }
-    }
-
-    /// <summary>
-    /// Notification for subgraph transfer progress updates.
-    /// </summary>
-    public sealed class SubgraphTransferProgressNotification
-    {
-        public Guid SubtaskId { get; init; }
-        public Guid FromPartitionId { get; init; }
-        public Guid ToPartitionId { get; init; }
-        public long BytesTransferred { get; init; }
-        public long TotalBytes { get; init; }
-        public int ProgressPercent => TotalBytes > 0 ? (int)((BytesTransferred * 100) / TotalBytes) : 0;
-        public DateTime TimestampUtc { get; init; }
     }
 
     /// <summary>

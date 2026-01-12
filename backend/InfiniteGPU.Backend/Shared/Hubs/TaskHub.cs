@@ -1,20 +1,38 @@
-using System.Collections.Concurrent; 
-using System.Security.Claims; 
+using System.Collections.Concurrent;
+using System.Security.Claims;
 using System.Text.Json;
 using Task = System.Threading.Tasks.Task;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Subtasks;
 using InfiniteGPU.Backend.Shared.Models;
-using InfiniteGPU.Backend.Shared.Services; 
+using InfiniteGPU.Backend.Shared.Services;
+using InfiniteGPU.Contracts.Hubs;
+using InfiniteGPU.Contracts.Hubs.Payloads;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
+// Aliases for contract types to avoid conflicts with backend types
+using ContractTaskDto = InfiniteGPU.Contracts.Hubs.Payloads.TaskDto;
+using ContractSubtaskDto = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskDto;
+using ContractTaskStatus = InfiniteGPU.Contracts.Hubs.Payloads.TaskStatus;
+using ContractSubtaskStatus = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskStatus;
+using ContractTaskType = InfiniteGPU.Contracts.Hubs.Payloads.TaskType;
+using ContractPartitionStatus = InfiniteGPU.Contracts.Hubs.Payloads.PartitionStatus;
+using ContractWebRtcConnectionState = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcConnectionState;
+using ContractWebRtcSignalingType = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingType;
+using ContractWebRtcSignalingMessage = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcSignalingMessage;
+using ContractPartitionAssignment = InfiniteGPU.Contracts.Hubs.Payloads.PartitionAssignment;
+using ContractPartitionReadyNotification = InfiniteGPU.Contracts.Hubs.Payloads.PartitionReadyNotification;
+using ContractTensorTransferProgress = InfiniteGPU.Contracts.Hubs.Payloads.TensorTransferProgress;
+using ContractTurnCredentials = InfiniteGPU.Contracts.Hubs.Payloads.TurnCredentials;
+using ContractHardwareCapabilitiesDto = InfiniteGPU.Contracts.Hubs.Payloads.HardwareCapabilitiesDto;
+
 namespace InfiniteGPU.Backend.Shared.Hubs;
 
 [Authorize]
-public class TaskHub : Hub
+public class TaskHub : Hub<ITaskHubClient>, ITaskHubServer
 {
     private readonly AppDbContext _context;
     private readonly TaskAssignmentService _assignmentService;
@@ -28,8 +46,9 @@ public class TaskHub : Hub
     /// <summary>
     /// Hardware capabilities for each connected device.
     /// Public for access by DistributedTaskOrchestrator.
+    /// Uses contract type for cross-project compatibility.
     /// </summary>
-    public static readonly ConcurrentDictionary<Guid, HardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
+    public static readonly ConcurrentDictionary<Guid, ContractHardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
     
     /// <summary>
     /// Network metrics for each connected device.
@@ -37,38 +56,39 @@ public class TaskHub : Hub
     /// </summary>
     public static readonly ConcurrentDictionary<Guid, DeviceNetworkMetrics> DeviceNetworkMetrics = new();
 
-    public const string ProvidersGroupName = "Providers";
-    public const string OnSubtaskAcceptedEvent = "OnSubtaskAccepted";
-    public const string OnProgressUpdateEvent = "OnProgressUpdate";
-    public const string OnCompleteEvent = "OnComplete";
-    public const string OnFailureEvent = "OnFailure";
-    public const string OnAvailableSubtasksChangedEvent = "OnAvailableSubtasksChanged";
-    public const string OnExecutionRequestedEvent = "OnExecutionRequested";
-    public const string OnExecutionAcknowledgedEvent = "OnExecutionAcknowledged";
+    // Use constants from shared contracts for event names
+    public const string ProvidersGroupName = TaskHubGroups.Providers;
+    public const string OnSubtaskAcceptedEvent = TaskHubEvents.OnSubtaskAccepted;
+    public const string OnProgressUpdateEvent = TaskHubEvents.OnProgressUpdate;
+    public const string OnCompleteEvent = TaskHubEvents.OnComplete;
+    public const string OnFailureEvent = TaskHubEvents.OnFailure;
+    public const string OnAvailableSubtasksChangedEvent = TaskHubEvents.OnAvailableSubtasksChanged;
+    public const string OnExecutionRequestedEvent = TaskHubEvents.OnExecutionRequested;
+    public const string OnExecutionAcknowledgedEvent = TaskHubEvents.OnExecutionAcknowledged;
 
     // WebRTC Signaling Events
-    public const string OnWebRtcOfferEvent = "OnWebRtcOffer";
-    public const string OnWebRtcAnswerEvent = "OnWebRtcAnswer";
-    public const string OnWebRtcIceCandidateEvent = "OnWebRtcIceCandidate";
-    public const string OnWebRtcIceRestartEvent = "OnWebRtcIceRestart";
+    public const string OnWebRtcOfferEvent = TaskHubEvents.OnWebRtcOffer;
+    public const string OnWebRtcAnswerEvent = TaskHubEvents.OnWebRtcAnswer;
+    public const string OnWebRtcIceCandidateEvent = TaskHubEvents.OnWebRtcIceCandidate;
+    public const string OnWebRtcIceRestartEvent = TaskHubEvents.OnWebRtcIceRestart;
 
     // Partition Coordination Events
-    public const string OnPartitionAssignedEvent = "OnPartitionAssigned";
-    public const string OnPartitionReadyEvent = "OnPartitionReady";
-    public const string OnPartitionWaitingForInputEvent = "OnPartitionWaitingForInput";
-    public const string OnPartitionProgressEvent = "OnPartitionProgress";
-    public const string OnPartitionCompletedEvent = "OnPartitionCompleted";
-    public const string OnPartitionFailedEvent = "OnPartitionFailed";
-    public const string OnTensorTransferProgressEvent = "OnTensorTransferProgress";
-    public const string OnSubtaskPartitionsReadyEvent = "OnSubtaskPartitionsReady";
+    public const string OnPartitionAssignedEvent = TaskHubEvents.OnPartitionAssigned;
+    public const string OnPartitionReadyEvent = TaskHubEvents.OnPartitionReady;
+    public const string OnPartitionWaitingForInputEvent = TaskHubEvents.OnPartitionWaitingForInput;
+    public const string OnPartitionProgressEvent = TaskHubEvents.OnPartitionProgress;
+    public const string OnPartitionCompletedEvent = TaskHubEvents.OnPartitionCompleted;
+    public const string OnPartitionFailedEvent = TaskHubEvents.OnPartitionFailed;
+    public const string OnTensorTransferProgressEvent = TaskHubEvents.OnTensorTransferProgress;
+    public const string OnSubtaskPartitionsReadyEvent = TaskHubEvents.OnSubtaskPartitionsReady;
     
     // Parent Peer Coordination Events
-    public const string OnParentPeerElectedEvent = "OnParentPeerElected";
-    public const string OnSubgraphDistributionStartEvent = "OnSubgraphDistributionStart";
-    public const string OnSubgraphReceivedEvent = "OnSubgraphReceived";
-    public const string OnSubgraphTransferProgressEvent = "OnSubgraphTransferProgress";
-    public const string OnModelDownloadProgressEvent = "OnModelDownloadProgress";
-    public const string OnPartitioningProgressEvent = "OnPartitioningProgress";
+    public const string OnParentPeerElectedEvent = TaskHubEvents.OnParentPeerElected;
+    public const string OnSubgraphDistributionStartEvent = TaskHubEvents.OnSubgraphDistributionStart;
+    public const string OnSubgraphReceivedEvent = TaskHubEvents.OnSubgraphReceived;
+    public const string OnSubgraphTransferProgressEvent = TaskHubEvents.OnSubgraphTransferProgress;
+    public const string OnModelDownloadProgressEvent = TaskHubEvents.OnModelDownloadProgress;
+    public const string OnPartitioningProgressEvent = TaskHubEvents.OnPartitioningProgress;
 
     // Partition group management - maps subtaskId to set of connectionIds involved
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, string>> SubtaskPartitionConnections = new();
@@ -197,7 +217,7 @@ public class TaskHub : Hub
         await base.OnDisconnectedAsync(exception);
     }
 
-    public async Task JoinAvailableTasks(string userId, string role, HardwareCapabilitiesDto? hardwareCapabilities = null)
+    public async Task JoinAvailableTasks(string userId, string role, ContractHardwareCapabilitiesDto? hardwareCapabilities = null)
     {
         var normalizedUserId = string.IsNullOrWhiteSpace(CurrentUserId) ? userId : CurrentUserId!;
 
@@ -1269,6 +1289,120 @@ public class TaskHub : Hub
 
     #endregion
 
+    #region Relay Methods (SignalR fallback when WebRTC not available)
+
+    /// <summary>
+    /// Relays subgraph metadata to target partition when WebRTC data channel is not established.
+    /// </summary>
+    public async Task RelaySubgraphMetadata(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string metadataBase64)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogDebug(
+            "Relaying subgraph metadata from {FromPartitionId} to {ToPartitionId} for subtask {SubtaskId}",
+            fromPartitionId,
+            toPartitionId,
+            subtaskId);
+
+        var targetPartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == toPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (targetPartition?.ConnectionId is null)
+        {
+            throw new HubException($"Target partition {toPartitionId} not found or not connected.");
+        }
+
+        await Clients.Client(targetPartition.ConnectionId).SendAsync(
+            TaskHubEvents.OnSubgraphMetadataReceived,
+            new
+            {
+                SubtaskId = subtaskId,
+                FromPartitionId = fromPartitionId,
+                ToPartitionId = toPartitionId,
+                MetadataBase64 = metadataBase64,
+                TimestampUtc = DateTime.UtcNow
+            },
+            Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Relays a subgraph chunk to target partition when WebRTC data channel is not established.
+    /// </summary>
+    public async Task RelaySubgraphChunk(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, int chunkIndex, int totalChunks, string chunkDataBase64)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogTrace(
+            "Relaying subgraph chunk {ChunkIndex}/{TotalChunks} from {FromPartitionId} to {ToPartitionId}",
+            chunkIndex,
+            totalChunks,
+            fromPartitionId,
+            toPartitionId);
+
+        var targetPartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == toPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (targetPartition?.ConnectionId is null)
+        {
+            throw new HubException($"Target partition {toPartitionId} not found or not connected.");
+        }
+
+        await Clients.Client(targetPartition.ConnectionId).SendAsync(
+            TaskHubEvents.OnSubgraphChunkReceived,
+            new
+            {
+                SubtaskId = subtaskId,
+                FromPartitionId = fromPartitionId,
+                ToPartitionId = toPartitionId,
+                ChunkIndex = chunkIndex,
+                TotalChunks = totalChunks,
+                ChunkDataBase64 = chunkDataBase64,
+                TimestampUtc = DateTime.UtcNow
+            },
+            Context.ConnectionAborted);
+    }
+
+    /// <summary>
+    /// Relays a tensor chunk to target partition when WebRTC data channel is not established.
+    /// </summary>
+    public async Task RelayTensorChunk(Guid subtaskId, Guid fromPartitionId, Guid toPartitionId, string tensorName, int chunkIndex, int totalChunks, string chunkDataBase64)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogTrace(
+            "Relaying tensor chunk {TensorName} {ChunkIndex}/{TotalChunks} from {FromPartitionId} to {ToPartitionId}",
+            tensorName,
+            chunkIndex,
+            totalChunks,
+            fromPartitionId,
+            toPartitionId);
+
+        var targetPartition = await _context.Partitions
+            .FirstOrDefaultAsync(p => p.Id == toPartitionId && p.SubtaskId == subtaskId, Context.ConnectionAborted);
+
+        if (targetPartition?.ConnectionId is null)
+        {
+            throw new HubException($"Target partition {toPartitionId} not found or not connected.");
+        }
+
+        await Clients.Client(targetPartition.ConnectionId).SendAsync(
+            TaskHubEvents.OnTensorChunkReceived,
+            new
+            {
+                SubtaskId = subtaskId,
+                FromPartitionId = fromPartitionId,
+                ToPartitionId = toPartitionId,
+                TensorName = tensorName,
+                ChunkIndex = chunkIndex,
+                TotalChunks = totalChunks,
+                ChunkDataBase64 = chunkDataBase64,
+                TimestampUtc = DateTime.UtcNow
+            },
+            Context.ConnectionAborted);
+    }
+
+    #endregion
+
     #region Partition Helper Methods
 
     public static string SubtaskGroupName(Guid subtaskId) => $"Subtask_{subtaskId}";
@@ -1417,11 +1551,11 @@ public class TaskHub : Hub
     /// Gets TURN credentials for WebRTC connections.
     /// In production, these should be short-lived credentials from a TURN server.
     /// </summary>
-    public Task<TurnCredentials> GetTurnCredentials()
+    public Task<ContractTurnCredentials> GetTurnCredentials()
     {
         // TODO: In production, generate short-lived TURN credentials
         // For now, return placeholder STUN servers
-        return Task.FromResult(new TurnCredentials
+        return Task.FromResult(new ContractTurnCredentials
         {
             Username = "",
             Credential = "",
