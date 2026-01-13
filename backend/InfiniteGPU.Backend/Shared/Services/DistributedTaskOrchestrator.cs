@@ -19,7 +19,6 @@ namespace InfiniteGPU.Backend.Shared.Services;
 public class DistributedTaskOrchestrator
 {
     private readonly AppDbContext _context;
-    private readonly SubtaskPartitionManager _partitionManager;
     private readonly IHubContext<TaskHub> _hubContext;
     private readonly ILogger<DistributedTaskOrchestrator> _logger;
 
@@ -29,12 +28,10 @@ public class DistributedTaskOrchestrator
 
     public DistributedTaskOrchestrator(
         AppDbContext context,
-        SubtaskPartitionManager partitionManager,
         IHubContext<TaskHub> hubContext,
         ILogger<DistributedTaskOrchestrator> logger)
     {
         _context = context;
-        _partitionManager = partitionManager;
         _hubContext = hubContext;
         _logger = logger;
     }
@@ -54,12 +51,50 @@ public class DistributedTaskOrchestrator
 
         var subtask = await _context.Subtasks
             .Include(s => s.Task)
+            .Include(s => s.Partitions)
             .FirstOrDefaultAsync(s => s.Id == subtaskId, cancellationToken);
 
         if (subtask is null)
         {
             _logger.LogError("Subtask {SubtaskId} not found", subtaskId);
             return false;
+        }
+
+        // Check if partitions already exist (populated by client response)
+        if (subtask.Partitions.Any())
+        {
+            _logger.LogInformation("Subtask {SubtaskId} already has {Count} partitions. Proceeding to assignment check.", subtask.Id, subtask.Partitions.Count);
+            
+            var existingPartitions = subtask.Partitions.ToList();
+            var availableDevicesForAssignment = await GetAvailableDeviceCandidatesAsync(cancellationToken);
+
+            // Step 3: Assign partitions to devices (if not already assigned)
+            var assignmentResult = await AssignPartitionsToDevicesAsync(
+                existingPartitions,
+                availableDevicesForAssignment,
+                cancellationToken);
+
+            if (!assignmentResult.Success)
+            {
+                _logger.LogError(
+                    "Failed to assign partitions for subtask {SubtaskId}: {Reason}",
+                    subtaskId,
+                    assignmentResult.FailureReason);
+                
+                // Don't cancel immediately, maybe retry? For now, fail.
+                 await CancelPartitionsAsync(subtaskId, assignmentResult.FailureReason ?? "Assignment failed", cancellationToken);
+                return false;
+            }
+
+            // Step 4: Notify devices of their partition assignments
+            await NotifyPartitionAssignmentsAsync(subtask, existingPartitions, cancellationToken);
+
+            _logger.LogInformation(
+                "Successfully orchestrated (resumed) {PartitionCount} partitions for subtask {SubtaskId}",
+                existingPartitions.Count,
+                subtaskId);
+
+            return true;
         }
 
         // Get available devices
@@ -71,60 +106,39 @@ public class DistributedTaskOrchestrator
             return false;
         }
 
-        // Step 1: Analyze and create partition plan
-        var partitionPlan = await _partitionManager.AnalyzeSubtaskAsync(
-            subtask,
-            availableDevices,
-            modelSizeBytes,
-            cancellationToken);
-
-        if (partitionPlan is null)
+        // NEW FLOW: Request partitioning from the provider client
+        if (string.IsNullOrEmpty(subtask.AssignedProviderId))
         {
-            _logger.LogError("Failed to create partition plan for subtask {SubtaskId}", subtaskId);
-            return false;
+             _logger.LogError("Subtask {SubtaskId} has no assigned provider to request partitioning from.", subtaskId);
+             return false;
         }
 
-        if (!partitionPlan.RequiresPartitioning)
+        _logger.LogInformation("Requesting partitioning plan from provider {ProviderId}", subtask.AssignedProviderId);
+
+        var deviceDtos = availableDevices.Select(d => new InfiniteGPU.Contracts.Hubs.Payloads.DeviceCandidateDto
         {
-            _logger.LogInformation("Subtask {SubtaskId} does not require partitioning", subtaskId);
-            return true; // Will be handled as single-device execution
-        }
+            DeviceId = d.DeviceId,
+            ProviderId = d.ProviderId,
+            AvailableMemoryBytes = d.AvailableMemoryBytes,
+            ComputeCapability = d.ComputeCapability,
+            EstimatedBandwidthBps = d.EstimatedBandwidthBps,
+            EstimatedLatencyMs = d.EstimatedLatencyMs
+        }).ToList();
 
-        // Step 2: Create partition records
-        var partitions = await _partitionManager.CreatePartitionsAsync(subtask, partitionPlan, cancellationToken);
-        var partitionList = partitions.ToList();
-
-        if (!partitionList.Any())
+        var requestPayload = new InfiniteGPU.Contracts.Hubs.Payloads.PartitioningRequestPayload
         {
-            _logger.LogError("Failed to create partitions for subtask {SubtaskId}", subtaskId);
-            return false;
-        }
+            SubtaskId = subtaskId,
+            ModelSizeBytes = modelSizeBytes,
+            ModelUri = subtask.OnnxModelBlobUri,
+            ParametersJson = subtask.Params,
+            AvailableDevices = deviceDtos
+        };
 
-        // Step 3: Assign partitions to devices
-        var assignmentResult = await _partitionManager.AssignPartitionsToDevicesAsync(
-            partitionList,
-            availableDevices,
-            cancellationToken);
+        var providerGroup = TaskHub.ProviderGroupName(subtask.AssignedProviderId);
+        await _hubContext.Clients.Group(providerGroup).RequestPartitioning(requestPayload);
 
-        if (!assignmentResult.Success)
-        {
-            _logger.LogError(
-                "Failed to assign partitions for subtask {SubtaskId}: {Reason}",
-                subtaskId,
-                assignmentResult.FailureReason);
-            
-            await _partitionManager.CancelPartitionsAsync(subtaskId, assignmentResult.FailureReason ?? "Assignment failed", cancellationToken);
-            return false;
-        }
-
-        // Step 4: Notify devices of their partition assignments
-        await NotifyPartitionAssignmentsAsync(subtask, partitionList, cancellationToken);
-
-        _logger.LogInformation(
-            "Successfully orchestrated {PartitionCount} partitions for subtask {SubtaskId}",
-            partitionList.Count,
-            subtaskId);
-
+        // We return true here to indicate the process is "active" (waiting for callback)
+        // ideally update status to something indicative if possible, but keeping as is for now.
         return true;
     }
 
@@ -392,7 +406,7 @@ public class DistributedTaskOrchestrator
                 subtaskId);
 
             // Cancel all other partitions
-            await _partitionManager.CancelPartitionsAsync(
+            await CancelPartitionsAsync(
                 subtaskId,
                 $"Partition {partitionId} failed: {failureReason}",
                 cancellationToken);
@@ -426,7 +440,7 @@ public class DistributedTaskOrchestrator
 
         if (filteredDevices.Any())
         {
-            var assignmentResult = await _partitionManager.AssignPartitionsToDevicesAsync(
+            var assignmentResult = await AssignPartitionsToDevicesAsync(
                 new[] { partition },
                 filteredDevices,
                 cancellationToken);
@@ -495,7 +509,7 @@ public class DistributedTaskOrchestrator
         Guid subtaskId,
         CancellationToken cancellationToken = default)
     {
-        var allCompleted = await _partitionManager.AreAllPartitionsCompletedAsync(subtaskId, cancellationToken);
+        var allCompleted = await AreAllPartitionsCompletedAsync(subtaskId, cancellationToken);
 
         if (allCompleted)
         {

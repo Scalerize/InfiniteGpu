@@ -90,6 +90,15 @@ public interface ITaskHubClient
 
     #endregion
 
+    #region Partitioning
+
+    /// <summary>
+    /// Called to request the desktop client to perform partitioning for a subtask.
+    /// </summary>
+    Task RequestPartitioning(PartitioningRequestPayload payload);
+
+    #endregion
+
     #region Partition Coordination Events
 
     /// <summary>

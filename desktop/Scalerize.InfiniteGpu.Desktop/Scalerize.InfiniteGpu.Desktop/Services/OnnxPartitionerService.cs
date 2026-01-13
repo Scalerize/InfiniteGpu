@@ -123,10 +123,141 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         // Maximum allowed edge cut ratio (communication overhead)
         private const double MAX_EDGE_CUT_RATIO = 0.3; // 30%
 
+        // DTO Usings
+        using DeviceCandidateDto = InfiniteGPU.Contracts.Hubs.Payloads.DeviceCandidateDto;
+        using SmartPartitionDto = InfiniteGPU.Contracts.Hubs.Payloads.SmartPartitionDto;
+        using PartitionStatus = InfiniteGPU.Contracts.Hubs.Payloads.PartitionStatus;
+
         public OnnxPartitionerService(OnnxParsingService parsingService, OnnxSizeService sizeService)
         {
             _parsingService = parsingService ?? throw new ArgumentNullException(nameof(parsingService));
             _sizeService = sizeService ?? throw new ArgumentNullException(nameof(sizeService));
+        }
+
+        /// <summary>
+        /// Creates a partition plan for the given model and available devices.
+        /// </summary>
+        public List<SmartPartitionDto> CreatePartitionPlan(
+            Onnx.ModelProto model,
+            List<NamedOnnxValue> inputs,
+            List<DeviceCandidateDto> availableDevices,
+            Guid subtaskId)
+        {
+            if (availableDevices == null || !availableDevices.Any())
+            {
+                throw new ArgumentException("No available devices provided", nameof(availableDevices));
+            }
+
+            // Determine memory threshold based on available devices
+            // We'll use the average available memory to encourage balanced partitioning
+            long memoryThresholdBytes = (long)availableDevices.Average(d => d.AvailableMemoryBytes);
+            // Ensure we don't exceed the largest device (partition must fit)
+            long maxDeviceMemory = availableDevices.Max(d => d.AvailableMemoryBytes);
+            memoryThresholdBytes = Math.Min(memoryThresholdBytes, maxDeviceMemory);
+
+            // Generate partition graph
+            var graph = PartitionModel(model, inputs, memoryThresholdBytes);
+
+            var partitionDtos = new List<SmartPartitionDto>();
+            var sortedDevices = availableDevices.OrderByDescending(d => d.AvailableMemoryBytes).ToList();
+            var deviceUsage = new Dictionary<Guid, long>(); // Track used memory per device
+
+            foreach (var node in graph.Nodes)
+            {
+                var partitionId = Guid.NewGuid();
+                
+                // Find best device for this partition
+                DeviceCandidateDto? assignedDevice = null;
+                
+                // Simple greedy assignment: find first device with enough REMAINING memory
+                foreach (var device in sortedDevices)
+                {
+                    long usedMemory = deviceUsage.GetValueOrDefault(device.DeviceId, 0);
+                    if (device.AvailableMemoryBytes - usedMemory >= node.EstimatedMemoryBytes)
+                    {
+                        assignedDevice = device;
+                        deviceUsage[device.DeviceId] = usedMemory + node.EstimatedMemoryBytes;
+                        break;
+                    }
+                }
+                
+                // If no device fits, we might need to fail or just assign to largest (and hope virtual memory handles it)
+                if (assignedDevice == null)
+                {
+                    assignedDevice = sortedDevices.First(); // Fallback to largest
+                    // Still track usage
+                    deviceUsage[assignedDevice.DeviceId] = deviceUsage.GetValueOrDefault(assignedDevice.DeviceId, 0) + node.EstimatedMemoryBytes;
+                }
+
+                var dto = new SmartPartitionDto
+                {
+                    Id = partitionId,
+                    SubtaskId = subtaskId,
+                    PartitionIndex = node.Id,
+                    Status = PartitionStatus.Pending,
+                    EstimatedMemoryMb = node.EstimatedMemoryBytes / (1024 * 1024),
+                    IsParentPeer = node.Id == 0, // Assume root node is parent peer for now
+                    InputTensorNames = node.InputNames,
+                    OutputTensorNames = node.OutputNames,
+                    AssignedDeviceId = assignedDevice.DeviceId,
+                    AssignedToUserId = assignedDevice.ProviderId,
+                    CreatedAtUtc = DateTime.UtcNow
+                    // Upstream/Downstream will be linked in a second pass or based on graph structure
+                };
+                
+                partitionDtos.Add(dto);
+            }
+
+            // Link Upstream/Downstream partitions
+            // Mapping from NodeId (int) to PartitionId (Guid)
+            var nodeToPartitionId = partitionDtos.ToDictionary(p => p.PartitionIndex, p => p.Id);
+
+            var linkedDtos = new List<SmartPartitionDto>();
+            foreach (var dto in partitionDtos)
+            {
+                // Find node
+                var node = graph.Nodes.First(n => n.Id == dto.PartitionIndex);
+                
+                // Resolve Upstream (Previous)
+                Guid? upstreamId = null;
+                if (node.PreviousNodes.Any())
+                {
+                    // For pipeline, we usually have one linear upstream. If multiple, pick first valid.
+                    // Complex DAGs might need more robust handling in DTO (List of Upstream) or just pick primary.
+                    upstreamId = nodeToPartitionId[node.PreviousNodes.First().Id];
+                }
+
+                // Resolve Downstream (Next)
+                Guid? downstreamId = null;
+                if (node.NextNodes.Any())
+                {
+                    downstreamId = nodeToPartitionId[node.NextNodes.First().Id];
+                }
+
+                // Create new DTO with links (SmartPartitionDto is immutable/init-only usually)
+                // Actually it has init properties. We can use object initializer with `with` expression if C# version supports, or just recreate.
+                // Assuming C# 9+ `with` works on classes if they are records, but this is a class.
+                // Recreating for safety.
+
+                linkedDtos.Add(new SmartPartitionDto
+                {
+                    Id = dto.Id,
+                    SubtaskId = dto.SubtaskId,
+                    PartitionIndex = dto.PartitionIndex,
+                    Status = dto.Status,
+                    EstimatedMemoryMb = dto.EstimatedMemoryMb,
+                    IsParentPeer = dto.IsParentPeer,
+                    InputTensorNames = dto.InputTensorNames,
+                    OutputTensorNames = dto.OutputTensorNames,
+                    AssignedDeviceId = dto.AssignedDeviceId,
+                    AssignedToUserId = dto.AssignedToUserId,
+                    CreatedAtUtc = dto.CreatedAtUtc,
+                    UpstreamPartitionId = upstreamId,
+                    DownstreamPartitionId = downstreamId
+                });
+            }
+
+            return linkedDtos;
         }
 
         /// <summary>

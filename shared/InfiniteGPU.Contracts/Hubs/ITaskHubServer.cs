@@ -112,6 +112,15 @@ public interface ITaskHubServer
 
     #endregion
 
+    #region Partitioning
+
+    /// <summary>
+    /// Submits the result of a partitioning request.
+    /// </summary>
+    Task SubmitPartitioningResult(PartitioningResultPayload result);
+
+    #endregion
+
     #region Partition Coordination
 
     /// <summary>

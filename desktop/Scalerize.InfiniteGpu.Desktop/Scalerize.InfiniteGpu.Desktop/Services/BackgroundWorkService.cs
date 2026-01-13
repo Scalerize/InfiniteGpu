@@ -28,6 +28,10 @@ using ContractWebRtcPeerInfo = InfiniteGPU.Contracts.Hubs.Payloads.WebRtcPeerInf
 using ContractHardwareCapabilitiesDto = InfiniteGPU.Contracts.Hubs.Payloads.HardwareCapabilitiesDto;
 using ContractSmartPartitionDto = InfiniteGPU.Contracts.Hubs.Payloads.SmartPartitionDto;
 using ContractSubtaskPartitionsReadyPayload = InfiniteGPU.Contracts.Hubs.Payloads.SubtaskPartitionsReadyPayload;
+using ContractPartitioningRequestPayload = InfiniteGPU.Contracts.Hubs.Payloads.PartitioningRequestPayload;
+using ContractPartitioningResultPayload = InfiniteGPU.Contracts.Hubs.Payloads.PartitioningResultPayload;
+using ContractDeviceCandidateDto = InfiniteGPU.Contracts.Hubs.Payloads.DeviceCandidateDto;
+using ContractSmartPartitionDto = InfiniteGPU.Contracts.Hubs.Payloads.SmartPartitionDto;
 
 namespace Scalerize.InfiniteGpu.Desktop.Services
 {
@@ -406,8 +410,76 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         {
             _executionRequestedSubscription = connection.On<ContractExecutionRequestedPayload>(TaskHubEvents.OnExecutionRequested, payload => HandleExecutionRequestedAsync(payload));
             
+            // Register partitioning handler
+            connection.On<ContractPartitioningRequestPayload>(nameof(ITaskHubClient.RequestPartitioning), payload => HandlePartitioningRequestAsync(payload, connection));
+
             // Initialize WebRTC peer service with the hub connection
             _webRtcPeerService.Initialize(connection);
+        }
+
+        private async Task HandlePartitioningRequestAsync(ContractPartitioningRequestPayload payload, HubConnection connection)
+        {
+            try
+            {
+                Debug.WriteLine($"[BackgroundWorkService] Received partitioning request for subtask {payload.SubtaskId}");
+
+                if (string.IsNullOrEmpty(payload.ModelUri))
+                {
+                    throw new InvalidOperationException("Model URI is required for partitioning.");
+                }
+
+                // Download model
+                var modelBytes = await DownloadModelAsync(payload.ModelUri, _cts?.Token ?? CancellationToken.None);
+                
+                // Parse model
+                var modelProto = Onnx.ModelProto.Parser.ParseFrom(modelBytes);
+
+                // Build inputs (if parameters provided)
+                var inputs = new List<NamedOnnxValue>();
+                if (!string.IsNullOrEmpty(payload.ParametersJson)) // Need to add this to payload
+                {
+                    inputs = await _inputParsingService.BuildNamedInputsAsync(payload.ParametersJson, _cts?.Token ?? CancellationToken.None);
+                }
+
+                // Create plan
+                var partitions = _onnxPartitionerService.CreatePartitionPlan(
+                    modelProto, 
+                    inputs, 
+                    payload.AvailableDevices.ToList(), // DTO mapping assumed valid via alias
+                    payload.SubtaskId);
+
+                // Submit result
+                var result = new ContractPartitioningResultPayload
+                {
+                    SubtaskId = payload.SubtaskId,
+                    Success = true,
+                    Partitions = partitions
+                };
+
+                await connection.InvokeAsync(nameof(ITaskHubServer.SubmitPartitioningResult), result, _cts?.Token ?? CancellationToken.None);
+                
+                Debug.WriteLine($"[BackgroundWorkService] Submitted partitioning plan for subtask {payload.SubtaskId} ({partitions.Count} partitions)");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[BackgroundWorkService] Partitioning failed: {ex}");
+                
+                var failureResult = new ContractPartitioningResultPayload
+                {
+                    SubtaskId = payload.SubtaskId,
+                    Success = false,
+                    Error = ex.Message
+                };
+                
+                try 
+                {
+                    await connection.InvokeAsync(nameof(ITaskHubServer.SubmitPartitioningResult), failureResult, _cts?.Token ?? CancellationToken.None);
+                }
+                catch (Exception sendEx)
+                {
+                    Debug.WriteLine($"[BackgroundWorkService] Failed to send failure result: {sendEx}");
+                }
+            }
         }
 
         private Task HandleExecutionRequestedAsync(ContractExecutionRequestedPayload? payload)

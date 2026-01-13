@@ -175,7 +175,7 @@ builder.Services.AddHttpClient<MailgunEmailSender>();
 builder.Services.AddTransient<IEmailSender, MailgunEmailSender>();
 
 // Smart Partitioning Services
-builder.Services.AddScoped<SubtaskPartitionManager>();
+// Removed SubtaskPartitionManager registration
 builder.Services.AddScoped<DistributedTaskOrchestrator>();
 
 

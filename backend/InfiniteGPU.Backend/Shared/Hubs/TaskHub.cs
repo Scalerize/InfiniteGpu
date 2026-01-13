@@ -94,14 +94,18 @@ public class TaskHub : Hub, ITaskHubServer
     // Partition group management - maps subtaskId to set of connectionIds involved
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<Guid, string>> SubtaskPartitionConnections = new();
 
+    private readonly IServiceProvider _serviceProvider;
+
     public TaskHub(
         AppDbContext context,
         TaskAssignmentService assignmentService,
-        ILogger<TaskHub> logger)
+        ILogger<TaskHub> logger,
+        IServiceProvider serviceProvider)
     {
         _context = context;
         _assignmentService = assignmentService;
         _logger = logger;
+        _serviceProvider = serviceProvider;
     }
 
     private string? CurrentUserId => Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -399,6 +403,28 @@ public class TaskHub : Hub, ITaskHubServer
             await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
         }
     }
+
+    #region Partitioning Methods
+
+    /// <summary>
+    /// Submits the result of a partitioning request.
+    /// </summary>
+    public async Task SubmitPartitioningResult(InfiniteGPU.Contracts.Hubs.Payloads.PartitioningResultPayload result)
+    {
+        var providerUserId = RequireProvider();
+
+        _logger.LogInformation(
+            "SubmitPartitioningResult invoked by provider {ProviderId} for subtask {SubtaskId}",
+            providerUserId,
+            result.SubtaskId);
+
+        // Resolve orchestrator from service provider to avoid circular dependency
+        var orchestrator = _serviceProvider.GetRequiredService<DistributedTaskOrchestrator>();
+        
+        await orchestrator.ProcessPartitioningResultAsync(result, Context.ConnectionAborted);
+    }
+
+    #endregion
 
     #region WebRTC Signaling Methods
 
