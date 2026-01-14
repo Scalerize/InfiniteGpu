@@ -109,7 +109,7 @@ public sealed class TaskUploadUrlService : ITaskUploadUrlService
 
         return fileType switch
         {
-            TaskUploadFileType.Model => $"{basePath}/model.onnx",
+            TaskUploadFileType.Model => $"{taskId:D}/model.onnx",
             TaskUploadFileType.Input => $"{basePath}/inputs/{SanitizeSegment(inputName)}.{SanitizeExtension(fileExtension)}",
             TaskUploadFileType.Output => $"{basePath}/outputs/{SanitizeSegment(inputName)}.{SanitizeExtension(fileExtension)}",
             _ => throw new ArgumentOutOfRangeException(nameof(fileType), fileType, "Unsupported file type for upload URL generation.")
