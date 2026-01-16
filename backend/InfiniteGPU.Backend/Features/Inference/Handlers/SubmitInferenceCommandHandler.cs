@@ -7,13 +7,13 @@ using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Inference.Models;
 using InfiniteGPU.Backend.Shared.Hubs;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Services;
 using MediatR;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Task = System.Threading.Tasks.Task;
-using TaskStatus = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using TaskStatus = InfiniteGPU.Contracts.Models.TaskStatus;
 
 namespace InfiniteGPU.Backend.Features.Inference.Handlers;
 
@@ -35,13 +35,13 @@ public sealed class SubmitInferenceCommandHandler : IRequestHandler<SubmitInfere
     private readonly ApiKeyAuthenticationService _apiKeyAuthService;
     private readonly AppDbContext _dbContext;
     private readonly TaskAssignmentService _assignmentService;
-    private readonly IHubContext<TaskHub> _taskHubContext;
+    private readonly IHubContext<TaskHub, ITaskHubClient> _taskHubContext;
 
     public SubmitInferenceCommandHandler(
         ApiKeyAuthenticationService apiKeyAuthService,
         AppDbContext dbContext,
         TaskAssignmentService assignmentService,
-        IHubContext<TaskHub> taskHubContext)
+        IHubContext<TaskHub, ITaskHubClient> taskHubContext)
     {
         _apiKeyAuthService = apiKeyAuthService;
         _dbContext = dbContext;
@@ -312,3 +312,4 @@ public sealed class SubmitInferenceCommandHandler : IRequestHandler<SubmitInfere
         }
     }
 }
+

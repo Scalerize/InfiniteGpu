@@ -6,8 +6,8 @@ using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using SubtaskStatusEnum = InfiniteGPU.Backend.Shared.Models.SubtaskStatus;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using SubtaskStatusEnum = InfiniteGPU.Contracts.Models.SubtaskStatus;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 
 namespace InfiniteGPU.Backend.Shared.Services;
 
@@ -1046,3 +1046,4 @@ public sealed class TaskAssignmentService
 
     #endregion
 }
+

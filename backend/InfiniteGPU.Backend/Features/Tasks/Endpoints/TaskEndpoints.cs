@@ -2,8 +2,8 @@ using System.Security.Claims;
 using FluentValidation;
 using InfiniteGPU.Backend.Features.Tasks.Commands;
 using InfiniteGPU.Backend.Features.Tasks.Queries;
-using InfiniteGPU.Backend.Shared.Models;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using InfiniteGPU.Contracts.Models;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
@@ -235,3 +235,4 @@ public static class TaskEndpoints
                 group => group.Key,
                 group => group.ToArray());
 }
+

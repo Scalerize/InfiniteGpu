@@ -26,4 +26,8 @@
     <PackageReference Include="DotNetEnv" Version="3.1.1" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\..\shared\InfiniteGPU.Contracts\InfiniteGPU.Contracts.csproj" />
+  </ItemGroup>
+
 </Project>

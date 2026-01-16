@@ -1,4 +1,4 @@
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
 public sealed class SubtaskDto
 {
@@ -149,6 +149,9 @@ public sealed class SubtaskDto
         public InferenceConfigDto? InferenceConfig { get; init; }
 
         public ShardDescriptorDto? Shard { get; init; }
+        public string? OptimizerModelUrl { get; set; }
+        public string? CheckpointUrl { get; set; }
+        public string? EvalModelUrl { get; set; }
 
         public sealed class TrainConfigDto
         {

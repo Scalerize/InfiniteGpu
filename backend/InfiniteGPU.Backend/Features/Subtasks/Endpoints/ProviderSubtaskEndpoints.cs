@@ -2,7 +2,7 @@ using System.Security.Claims;
 using FluentValidation;
 using InfiniteGPU.Backend.Features.Subtasks.Commands;
 using InfiniteGPU.Backend.Features.Subtasks.Queries;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 
@@ -141,3 +141,4 @@ public static class ProviderSubtaskEndpoints
         string? WorkerType,
         IDictionary<string, object?>? Metadata);
 }
+

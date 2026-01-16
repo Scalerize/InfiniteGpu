@@ -1,6 +1,6 @@
 using MediatR;
-using InfiniteGPU.Backend.Shared.Models;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using InfiniteGPU.Contracts.Models;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 
 namespace InfiniteGPU.Backend.Features.Tasks.Queries;
 

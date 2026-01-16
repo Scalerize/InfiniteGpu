@@ -1,8 +1,5 @@
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
-/// <summary>
-/// Represents a single provider assignment lifecycle record for a subtask.
-/// </summary>
 public sealed class AssignmentHistoryEntryDto
 {
     public string ProviderUserId { get; init; } = string.Empty;

@@ -1,8 +1,8 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
-using InfiniteGPU.Backend.Shared.Models;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using InfiniteGPU.Contracts.Models;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 
 namespace InfiniteGPU.Backend.Data.Entities;
 
@@ -113,3 +113,4 @@ public class TaskOutputBinding
     [MaxLength(50)]
     public string? FileFormat { get; set; }
 }
+

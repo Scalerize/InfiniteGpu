@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
-using InfiniteGPU.Backend.Shared.Models;
-using SubtaskStatusEnum = InfiniteGPU.Backend.Shared.Models.SubtaskStatus;
+using InfiniteGPU.Contracts.Models;
+using SubtaskStatusEnum = InfiniteGPU.Contracts.Models.SubtaskStatus;
 
 namespace InfiniteGPU.Backend.Data.Entities;
 
@@ -106,3 +106,4 @@ public class Subtask
 
     public virtual ICollection<Withdrawal> Withdrawals { get; set; } = new List<Withdrawal>();
 }
+

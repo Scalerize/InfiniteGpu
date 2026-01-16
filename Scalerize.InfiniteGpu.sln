@@ -1,3 +1,4 @@
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.5.2.0
@@ -6,22 +7,51 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "backend", "backend", "{1AE8
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InfiniteGPU.Backend", "backend\InfiniteGPU.Backend\InfiniteGPU.Backend.csproj", "{1A894B06-B216-AF16-FF47-1CC032795955}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "shared", "shared", "{4F52FD11-658E-A102-6CD3-7D7C16FFA15B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InfiniteGPU.Contracts", "shared\InfiniteGPU.Contracts\InfiniteGPU.Contracts.csproj", "{C29ED770-4306-4B63-BEAC-B134654D0E09}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
 		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{1A894B06-B216-AF16-FF47-1CC032795955}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{1A894B06-B216-AF16-FF47-1CC032795955}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Debug|x64.Build.0 = Debug|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Debug|x86.Build.0 = Debug|Any CPU
 		{1A894B06-B216-AF16-FF47-1CC032795955}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1A894B06-B216-AF16-FF47-1CC032795955}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Release|x64.ActiveCfg = Release|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Release|x64.Build.0 = Release|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Release|x86.ActiveCfg = Release|Any CPU
+		{1A894B06-B216-AF16-FF47-1CC032795955}.Release|x86.Build.0 = Release|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Debug|x64.Build.0 = Debug|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Debug|x86.Build.0 = Debug|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Release|x64.ActiveCfg = Release|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Release|x64.Build.0 = Release|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Release|x86.ActiveCfg = Release|Any CPU
+		{C29ED770-4306-4B63-BEAC-B134654D0E09}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{1A894B06-B216-AF16-FF47-1CC032795955} = {1AE8ACA6-933B-BF2A-3671-3E2EAC007D16}
+		{C29ED770-4306-4B63-BEAC-B134654D0E09} = {4F52FD11-658E-A102-6CD3-7D7C16FFA15B}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {1E3F6D43-B3F4-4485-9ED2-1E80EC464DEF}

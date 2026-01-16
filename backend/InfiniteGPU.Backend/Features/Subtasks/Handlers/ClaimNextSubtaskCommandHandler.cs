@@ -1,6 +1,6 @@
 using InfiniteGPU.Backend.Features.Subtasks.Commands;
 using InfiniteGPU.Backend.Shared.Hubs;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Services;
 using MediatR;
 using Microsoft.AspNetCore.SignalR;
@@ -10,12 +10,12 @@ namespace InfiniteGPU.Backend.Features.Subtasks.Handlers;
 public sealed class ClaimNextSubtaskCommandHandler : IRequestHandler<ClaimNextSubtaskCommand, SubtaskDto?>
 {
     private readonly TaskAssignmentService _assignmentService;
-    private readonly IHubContext<TaskHub> _hubContext;
+    private readonly IHubContext<TaskHub, ITaskHubClient> _hubContext;
     private readonly ILogger<ClaimNextSubtaskCommandHandler> _logger;
 
     public ClaimNextSubtaskCommandHandler(
         TaskAssignmentService assignmentService,
-        IHubContext<TaskHub> hubContext,
+        IHubContext<TaskHub, ITaskHubClient> hubContext,
         ILogger<ClaimNextSubtaskCommandHandler> logger)
     {
         _assignmentService = assignmentService;

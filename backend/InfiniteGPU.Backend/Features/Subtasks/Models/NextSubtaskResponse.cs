@@ -1,4 +1,4 @@
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 
 namespace InfiniteGPU.Backend.Features.Subtasks.Models;
 

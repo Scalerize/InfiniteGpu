@@ -2,7 +2,7 @@ using MediatR;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Tasks.Queries;
-using InfiniteGPU.Backend.Shared.Models; 
+using InfiniteGPU.Contracts.Models; 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity;
 
@@ -72,3 +72,4 @@ public class GetTasksQueryHandler : IRequestHandler<GetTasksQuery, List<TaskDto>
         return dtos;
     }
 }
+

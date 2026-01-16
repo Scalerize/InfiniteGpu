@@ -1,4 +1,4 @@
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
 /// <summary>
 /// Describes the storage and access metadata for an ONNX model artifact.

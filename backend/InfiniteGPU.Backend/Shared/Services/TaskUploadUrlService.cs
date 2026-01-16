@@ -1,7 +1,7 @@
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Sas;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Options;
 using Microsoft.Extensions.Options;
 using System.Text.RegularExpressions;
@@ -146,3 +146,4 @@ public sealed class TaskUploadUrlService : ITaskUploadUrlService
             : cleaned.ToLowerInvariant();
     }
 }
+

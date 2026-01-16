@@ -2,7 +2,7 @@ using System.Text.Json;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Subtasks.Queries;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using MediatR;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -50,3 +50,4 @@ public sealed class GetAvailableSubtasksQueryHandler : IRequestHandler<GetAvaila
         return subtasks.Select(s => SubtaskMapping.CreateDto(s, isRequestorView: false)).ToList();
     }
 }
+
