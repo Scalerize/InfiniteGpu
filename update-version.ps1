@@ -139,8 +139,8 @@ function Update-WixPackage {
     
     $content = Get-Content $FilePath -Raw -Encoding UTF8
     
-    # Update Version attribute on Package element
-    $content = $content -replace '(<Package[^>]*Version=")[\d\.]+(")', "`${1}$Version`${2}"
+    # Update Version attribute on Package element (match whitespace before Version to avoid matching InstallerVersion)
+    $content = $content -replace '(\s+Version=")[\d\.]+(")', "`${1}$Version`${2}"
     
     Set-Content $FilePath -Value $content -Encoding UTF8 -NoNewline
     
