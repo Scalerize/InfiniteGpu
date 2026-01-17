@@ -28,6 +28,7 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHub
     private static readonly ConcurrentDictionary<string, Guid> ConnectionToDeviceMap = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>> DeviceConnections = new();
     private static readonly ConcurrentDictionary<Guid, HardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
+    private static readonly ConcurrentDictionary<Guid, HashSet<string>> DeviceCachedModelUrls = new();
 
     public const string ProvidersGroupName = "Providers";
     // Event names removed as we use safe proxy calls
@@ -354,6 +355,57 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHub
         {
             await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
         }
+    }
+
+    public async Task ReportCachedModels(IReadOnlyList<string> modelUrls)
+    {
+        var providerUserId = RequireProvider();
+        
+        if (!ConnectionToDeviceMap.TryGetValue(Context.ConnectionId, out var deviceId))
+        {
+            _logger.LogWarning("ReportCachedModels called but no device registered for connection {ConnectionId}", Context.ConnectionId);
+            return;
+        }
+
+        _logger.LogInformation(
+            "ReportCachedModels received from device {DeviceId}, provider {ProviderId}: {ModelCount} models",
+            deviceId,
+            providerUserId,
+            modelUrls?.Count ?? 0);
+
+        // Update in-memory cache for fast dispatch lookup
+        var urlSet = new HashSet<string>(StringComparer.Ordinal);
+        if (modelUrls != null)
+        {
+            foreach (var url in modelUrls.Where(u => !string.IsNullOrWhiteSpace(u)))
+            {
+                urlSet.Add(url);
+            }
+        }
+        DeviceCachedModelUrls[deviceId] = urlSet;
+
+        if (modelUrls == null || modelUrls.Count == 0)
+        {
+            return;
+        }
+
+        // Remove existing cache entries for this device in DB
+        await _context.DeviceModelCaches
+            .Where(c => c.DeviceId == deviceId)
+            .ExecuteDeleteAsync(Context.ConnectionAborted);
+
+        // Add new cache entries for each reported model URL
+        var nowUtc = DateTime.UtcNow;
+        _context.DeviceModelCaches.AddRange(urlSet
+        .Select(modelUrl => new DeviceModelCache
+            {
+                DeviceId = deviceId,
+                ModelUrl = modelUrl,
+                CachedAtUtc = nowUtc,
+                LastAccessedAtUtc = nowUtc
+            }));
+
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
     }
 
     public static Task OnSubtaskAccepted(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
@@ -685,7 +737,15 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHub
 
         foreach (var (deviceId, providerUserId) in sortedDevices)
         {
-            var assignment = await assignmentService.TryOfferNextSubtaskAsync(providerUserId, deviceId, cancellationToken);
+            // Get cached model URLs for this device (if any) for priority dispatch
+            DeviceCachedModelUrls.TryGetValue(deviceId, out var cachedUrls);
+            
+            var assignment = await assignmentService.TryOfferSubtaskWithCachedModelsAsync(
+                providerUserId, 
+                deviceId, 
+                cachedUrls,
+                cancellationToken);
+                
             if (assignment is null)
             {
                 continue;
@@ -917,24 +977,45 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHub
         return devices;
     }
 
-    private static List<(Guid DeviceId, string ProviderUserId)> GetDevicesSortedByRam(List<(Guid DeviceId, string ProviderUserId)> devices)
+    private static List<(Guid DeviceId, string ProviderUserId)> GetDevicesSortedByRam(List<(Guid DeviceId, string ProviderUserId)> devices, string? priorityModelUrl = null)
     {
-        var deviceRamPairs = new List<(Guid DeviceId, string ProviderUserId, long Ram)>();
+        var deviceRamPairs = new List<(Guid DeviceId, string ProviderUserId, long Ram, bool HasCachedModel)>();
 
         foreach (var (deviceId, providerUserId) in devices)
         {
             var ram = DeviceHardwareCapabilities.TryGetValue(deviceId, out var capabilities)
                 ? capabilities.TotalRamBytes
                 : 0;
-            deviceRamPairs.Add((deviceId, providerUserId, ram));
+
+            var hasCachedModel = false;
+            if (!string.IsNullOrEmpty(priorityModelUrl) &&
+                DeviceCachedModelUrls.TryGetValue(deviceId, out var cachedUrls))
+            {
+                hasCachedModel = cachedUrls.Contains(priorityModelUrl);
+            }
+
+            deviceRamPairs.Add((deviceId, providerUserId, ram, hasCachedModel));
         }
 
+        // Sort: devices with cached model first, then by RAM descending
         var sortedDevices = deviceRamPairs
-            .OrderByDescending(pair => pair.Ram)
+            .OrderByDescending(pair => pair.HasCachedModel)
+            .ThenByDescending(pair => pair.Ram)
             .Select(pair => (pair.DeviceId, pair.ProviderUserId))
             .ToList();
 
         return sortedDevices;
+    }
+
+    /// <summary>
+    /// Checks if a device has a specific model URL cached.
+    /// </summary>
+    public static bool DeviceHasModelCached(Guid deviceId, string modelUrl)
+    {
+        if (string.IsNullOrEmpty(modelUrl))
+            return false;
+
+        return DeviceCachedModelUrls.TryGetValue(deviceId, out var urls) && urls.Contains(modelUrl);
     }
 
     public static TaskDto BuildTaskDto(Data.Entities.Task task)

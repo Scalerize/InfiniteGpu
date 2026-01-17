@@ -20,7 +20,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Device> Devices { get; set; } = null!;
     public DbSet<ApiKey> ApiKeys { get; set; } = null!;
     public DbSet<SubtaskTimelineEvent> SubtaskTimelineEvents { get; set; } = null!;
-    public DbSet<ProviderModelCache> ProviderModelCaches { get; set; } = null!;
+    public DbSet<DeviceModelCache> DeviceModelCaches { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -119,16 +119,21 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
-        builder.Entity<ProviderModelCache>(entity =>
+        builder.Entity<DeviceModelCache>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.HasIndex(e => new { e.ProviderUserId, e.StoredFileName })
+            entity.HasIndex(e => new { e.DeviceId, e.ModelUrl })
                 .IsUnique();
-            entity.Property(e => e.StoredFileName)
-                .HasMaxLength(256);
-            entity.HasOne(e => e.Provider)
-                .WithMany()
-                .HasForeignKey(e => e.ProviderUserId)
+            entity.Property(e => e.ModelUrl)
+                .HasMaxLength(2048);
+            entity.Property(e => e.CachedAtUtc)
+                .HasColumnType("datetime2")
+                .HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.LastAccessedAtUtc)
+                .HasColumnType("datetime2");
+            entity.HasOne(e => e.Device)
+                .WithMany(d => d.CachedModels)
+                .HasForeignKey(e => e.DeviceId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

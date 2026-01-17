@@ -41,6 +41,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         private readonly OnnxParsingService _onnxParsingService;
         private readonly OnnxPartitionerService _onnxPartitionerService;
         private readonly HardwareMetricsService _hardwareMetricsService;
+        private readonly ModelCacheService _modelCacheService;
         private readonly HttpClient _httpClient;
         private readonly bool _ownsHttpClient;
         private readonly InputParsingService _inputParsingService;
@@ -64,7 +65,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             OutputParsingService outputParsingService,
             OnnxParsingService onnxParsingService,
             OnnxPartitionerService onnxPartitionerService,
-            HardwareMetricsService hardwareMetricsService)
+            HardwareMetricsService hardwareMetricsService,
+            ModelCacheService modelCacheService)
         {
             _deviceIdentifierService = deviceIdentifierService ??
                                        throw new ArgumentNullException(nameof(deviceIdentifierService));
@@ -78,6 +80,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 onnxPartitionerService ?? throw new ArgumentNullException(nameof(onnxPartitionerService));
             _hardwareMetricsService =
                 hardwareMetricsService ?? throw new ArgumentNullException(nameof(hardwareMetricsService));
+            _modelCacheService = modelCacheService ?? throw new ArgumentNullException(nameof(modelCacheService));
+            _modelCacheService.Initialize();
         }
 
         public void Start()
@@ -249,6 +253,13 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                     var taskHub = connection.CreateHubProxy<ITaskHub>();
                     await taskHub.JoinAvailableTasks(string.Empty, "Provider", hardwareCapabilities);
+
+                    // Report cached models to backend for priority dispatch
+                    var cachedModels = _modelCacheService.GetCachedModelUrls();
+                    if (cachedModels.Count > 0)
+                    {
+                        await taskHub.ReportCachedModels(cachedModels);
+                    }
 
                     while (!cancellationToken.IsCancellationRequested)
                     {
@@ -441,9 +452,16 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 }
                 else
                 {
-                    var modelBytes = await DownloadModelAsync(
-                        subtask.OnnxModel?.ReadUri ?? subtask.ExecutionSpec?.OnnxModelUrl ?? string.Empty,
-                        cancellationToken);
+                    var modelUrl = subtask.OnnxModel?.ReadUri ?? subtask.ExecutionSpec?.OnnxModelUrl ?? string.Empty;
+                    
+                    // Try to get model from cache first
+                    var modelBytes = await _modelCacheService.TryGetCachedModelAsync(modelUrl, cancellationToken);
+                    if (modelBytes == null)
+                    {
+                        modelBytes = await DownloadModelAsync(modelUrl, cancellationToken);
+                        // Cache the downloaded model for future use
+                        await _modelCacheService.CacheModelAsync(modelUrl, modelBytes, cancellationToken);
+                    }
 
                     stopwatch = Stopwatch.StartNew();
                     var inputs = await _inputParsingService.BuildNamedInputsAsync(

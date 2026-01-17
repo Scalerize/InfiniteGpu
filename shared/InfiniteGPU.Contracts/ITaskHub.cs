@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using InfiniteGPU.Contracts.Models;
 using TypedSignalR.Client;
 
@@ -15,4 +16,5 @@ public interface ITaskHub
     Task AcknowledgeExecutionStart(Guid subtaskId);
     Task SubmitResult(SubmitResultDto result);
     Task FailedResult(FailedResultDto result);
+    Task ReportCachedModels(IReadOnlyList<string> modelUrls);
 }

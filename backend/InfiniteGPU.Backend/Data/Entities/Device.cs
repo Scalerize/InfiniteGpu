@@ -36,4 +36,6 @@ public class Device
     public virtual ApplicationUser Provider { get; set; } = null!;
 
     public virtual ICollection<Subtask> Subtasks { get; set; } = new List<Subtask>();
+
+    public virtual ICollection<DeviceModelCache> CachedModels { get; set; } = new List<DeviceModelCache>();
 }
