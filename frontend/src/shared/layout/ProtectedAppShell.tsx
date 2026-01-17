@@ -8,6 +8,7 @@ import {
 import { updateProfile } from "../../features/auth/api";
 import { UserProfileUpdateDialog } from "../../features/requestor/components/UserProfileUpdateDialog";
 import { AppNavigation } from "../components/AppNavigation";
+import { UpdatePrompt } from "../components/UpdatePrompt";
 import scalerize from "../../assets/logo-blue.png";
 
 const capitalize = (value: string) =>
@@ -222,6 +223,8 @@ export const ProtectedAppShell = () => {
           }
         }}
       />
+
+      <UpdatePrompt />
     </div>
   );
 };
