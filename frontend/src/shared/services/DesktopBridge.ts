@@ -159,6 +159,16 @@ export const DesktopBridge = {
     }
   },
 
+  async getAssemblyVersion(): Promise<string | null> {
+    try {
+      const response = await DesktopBridge.invoke<{ version?: string | null }>('app:getVersion');
+      const version = response?.version;
+      return typeof version === 'string' && version.trim().length > 0 ? version.trim() : null;
+    } catch {
+      return null;
+    }
+  },
+
   async parseOnnxModel(file: File): Promise<OnnxModelParseResult> {
     const bridge = getBridge();
     if (!bridge) {

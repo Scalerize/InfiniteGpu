@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
 		<TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
@@ -12,6 +12,9 @@
 		<ProtobufGenerateBeforeCompile>true</ProtobufGenerateBeforeCompile>
 		<UseWinUI>true</UseWinUI>
 		<Nullable>enable</Nullable>
+		<Version>1.0.14.0</Version>
+		<AssemblyVersion>1.0.14.0</AssemblyVersion>
+		<FileVersion>1.0.14.0</FileVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
