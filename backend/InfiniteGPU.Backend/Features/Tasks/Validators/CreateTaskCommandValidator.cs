@@ -1,7 +1,7 @@
 using FluentValidation;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Tasks.Commands;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using Microsoft.AspNetCore.Identity;
 
 namespace InfiniteGPU.Backend.Features.Tasks.Validators;

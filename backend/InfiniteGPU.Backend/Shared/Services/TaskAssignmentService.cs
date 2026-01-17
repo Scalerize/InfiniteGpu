@@ -6,8 +6,8 @@ using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using SubtaskStatusEnum = InfiniteGPU.Backend.Shared.Models.SubtaskStatus;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using SubtaskStatusEnum = InfiniteGPU.Contracts.Models.SubtaskStatus;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 
 namespace InfiniteGPU.Backend.Shared.Services;
 
@@ -77,6 +77,90 @@ public sealed class TaskAssignmentService
                 .ThenBy(s => s.CreatedAt)
                 .ThenBy(s => s.Id)
                 .FirstOrDefaultAsync(cancellationToken);
+
+            if (subtask is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                _logger.LogInformation("No available subtask to offer for provider {ProviderId}", providerUserId);
+                return null;
+            }
+
+            var assignment = await AssignSubtaskInternalAsync(subtask, provider, "auto-offer", deviceId, cancellationToken);
+            if (assignment is null)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                return null;
+            }
+
+            await transaction.CommitAsync(cancellationToken);
+            return assignment;
+        });
+    }
+
+    /// <summary>
+    /// Tries to offer a subtask to a provider, prioritizing subtasks whose model URL matches one of the device's cached models.
+    /// Falls back to any available subtask if no cached model match is found.
+    /// </summary>
+    public async Task<AssignmentResult?> TryOfferSubtaskWithCachedModelsAsync(
+        string providerUserId,
+        Guid deviceId,
+        IReadOnlySet<string>? cachedModelUrls,
+        CancellationToken cancellationToken)
+    {
+        var provider = await _userManager.FindByIdAsync(providerUserId);
+        if (!IsProviderEligible(provider, providerUserId))
+        {
+            return null;
+        }
+
+        var strategy = _context.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction =
+                await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+
+            IQueryable<Subtask> baseQuery = _context.Subtasks
+                .Include(s => s.Task)
+                .Where(s =>
+                    (s.Status == SubtaskStatusEnum.Pending ||
+                     (s.Status == SubtaskStatusEnum.Failed && s.RequiresReassignment)) &&
+                    !string.IsNullOrEmpty(s.Task.UserId)
+#if DEBUG
+                    );
+#else
+                    && s.Task.UserId != providerUserId);
+#endif
+
+            Subtask? subtask = null;
+
+            // First, try to find a subtask with a cached model (API inference tasks only)
+            if (cachedModelUrls != null && cachedModelUrls.Count > 0)
+            {
+                subtask = await baseQuery
+                    .Where(s => s.Task.FillBindingsViaApi && 
+                               cachedModelUrls.Contains(s.OnnxModelBlobUri ?? ""))
+                    .OrderByDescending(s => s.RequiresReassignment)
+                    .ThenBy(s => s.CreatedAt)
+                    .ThenBy(s => s.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (subtask != null)
+                {
+                    _logger.LogInformation(
+                        "Found subtask {SubtaskId} with cached model for device {DeviceId}",
+                        subtask.Id, deviceId);
+                }
+            }
+
+            // Fallback to any available subtask
+            if (subtask == null)
+            {
+                subtask = await baseQuery
+                    .OrderByDescending(s => s.RequiresReassignment)
+                    .ThenBy(s => s.CreatedAt)
+                    .ThenBy(s => s.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
 
             if (subtask is null)
             {
@@ -1046,3 +1130,4 @@ public sealed class TaskAssignmentService
 
     #endregion
 }
+

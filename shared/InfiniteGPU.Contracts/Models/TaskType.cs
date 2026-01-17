@@ -1,6 +1,6 @@
 using System.ComponentModel;
 
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
 public enum TaskType
 {

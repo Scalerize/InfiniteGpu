@@ -2,7 +2,7 @@ using MediatR;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Features.Tasks.Models;
 using InfiniteGPU.Backend.Features.Tasks.Queries;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Hubs;
 using Microsoft.EntityFrameworkCore;
 

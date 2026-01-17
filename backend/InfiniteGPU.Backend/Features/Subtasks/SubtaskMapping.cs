@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using InfiniteGPU.Backend.Data.Entities;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 
 namespace InfiniteGPU.Backend.Features.Subtasks;
 
@@ -287,3 +287,4 @@ internal static class SubtaskMapping
         public InferencePayloadType PayloadType { get; set; }
     }
 }
+

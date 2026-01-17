@@ -37,6 +37,10 @@
 		<PackageReference Include="OpenCvSharp4.runtime.win" Version="4.11.0.20250507" />
 		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
 		<PackageReference Include="System.Management" Version="10.0.1" />
+		<PackageReference Include="TypedSignalR.Client" Version="3.6.0">
+		  <PrivateAssets>all</PrivateAssets>
+		  <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+		</PackageReference>
 	</ItemGroup>
 
 	<ItemGroup>
@@ -50,6 +54,10 @@
 	  <Content Include="Assets\logo-blue.ico">
 	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 	  </Content>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\..\..\shared\InfiniteGPU.Contracts\InfiniteGPU.Contracts.csproj" />
 	</ItemGroup>
 
 	<PropertyGroup>

@@ -1,4 +1,4 @@
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
 /// <summary>
 /// Represents a timeline event captured for a subtask.

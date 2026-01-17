@@ -1,20 +1,23 @@
-using System.Collections.Concurrent; 
-using System.Security.Claims; 
+using System.Collections.Concurrent;
+using System.Security.Claims;
 using System.Text.Json;
-using Task = System.Threading.Tasks.Task;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Subtasks;
-using InfiniteGPU.Backend.Shared.Models;
-using InfiniteGPU.Backend.Shared.Services; 
+using InfiniteGPU.Backend.Shared.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using InfiniteGPU.Contracts;
+using InfiniteGPU.Contracts.Models;
+using Task = System.Threading.Tasks.Task;
+using TaskStatus = InfiniteGPU.Contracts.Models.TaskStatus;
+using TaskType = InfiniteGPU.Contracts.Models.TaskType;
 
 namespace InfiniteGPU.Backend.Shared.Hubs;
 
 [Authorize]
-public class TaskHub : Hub
+public class TaskHub : Hub<ITaskHubClient>, ITaskHub
 {
     private readonly AppDbContext _context;
     private readonly TaskAssignmentService _assignmentService;
@@ -25,15 +28,10 @@ public class TaskHub : Hub
     private static readonly ConcurrentDictionary<string, Guid> ConnectionToDeviceMap = new(StringComparer.Ordinal);
     private static readonly ConcurrentDictionary<Guid, ConcurrentDictionary<string, byte>> DeviceConnections = new();
     private static readonly ConcurrentDictionary<Guid, HardwareCapabilitiesDto> DeviceHardwareCapabilities = new();
+    private static readonly ConcurrentDictionary<Guid, HashSet<string>> DeviceCachedModelUrls = new();
 
     public const string ProvidersGroupName = "Providers";
-    public const string OnSubtaskAcceptedEvent = "OnSubtaskAccepted";
-    public const string OnProgressUpdateEvent = "OnProgressUpdate";
-    public const string OnCompleteEvent = "OnComplete";
-    public const string OnFailureEvent = "OnFailure";
-    public const string OnAvailableSubtasksChangedEvent = "OnAvailableSubtasksChanged";
-    public const string OnExecutionRequestedEvent = "OnExecutionRequested";
-    public const string OnExecutionAcknowledgedEvent = "OnExecutionAcknowledged";
+    // Event names removed as we use safe proxy calls
 
     public TaskHub(
         AppDbContext context,
@@ -129,13 +127,22 @@ public class TaskHub : Hub
                     // Broadcast failure events for each failed subtask
                     foreach (var failure in failureResults)
                     {
+                        var failurePayload = new SubtaskFailureDto
+                        {
+                            Subtask = CreateSubtaskDto(failure.Subtask),
+                            ProviderUserId = providerUserId!,
+                            WasReassigned = failure.WasReassigned,
+                            TaskFailed = failure.TaskFailed,
+                            Error = new { reason = "Device disconnected", deviceId = deviceId.Value }
+                        };
+
                         await BroadcastFailureAsync(
                             Clients,
                             failure.Subtask,
                             providerUserId!,
                             failure.WasReassigned,
                             failure.TaskFailed,
-                            new { reason = "Device disconnected", deviceId = deviceId.Value },
+                            failurePayload.Error,
                             CancellationToken.None);
                     }
 
@@ -274,14 +281,19 @@ public class TaskHub : Hub
         await BroadcastExecutionAcknowledgedAsync(Clients, acknowledgement.Subtask, providerUserId, Context.ConnectionAborted);
     }
 
-    public async Task SubmitResult(Guid subtaskId, string resultDataJson)
+    public async Task SubmitResult(SubmitResultDto result)
     {
         var providerUserId = RequireProvider();
+        var subtaskId = result.SubtaskId;
 
         _logger.LogInformation(
             "SubmitResult invoked by provider {ProviderId} for subtask {SubtaskId}",
             providerUserId,
             subtaskId);
+
+        string resultDataJson = result.Outputs is not null 
+            ? JsonSerializer.Serialize(result.Outputs)
+            : "{}";
 
         var completion = await _assignmentService.CompleteSubtaskAsync(
             subtaskId,
@@ -294,29 +306,28 @@ public class TaskHub : Hub
             throw new HubException("Unable to complete subtask for this provider.");
         }
 
-        var resultsPayload = TryDeserializeResults(resultDataJson);
-
         await BroadcastCompletionAsync(
             Clients,
             completion.Subtask,
             providerUserId,
             completion.TaskCompleted,
-            resultsPayload,
+            result.Outputs,
             Context.ConnectionAborted);
 
         await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
     }
 
-    public async Task FailedResult(Guid subtaskId, string failureDataJson)
+    public async Task FailedResult(FailedResultDto result)
     {
         var providerUserId = RequireProvider();
+        var subtaskId = result.SubtaskId;
 
         _logger.LogInformation(
             "FailedResult invoked by provider {ProviderId} for subtask {SubtaskId}",
             providerUserId,
             subtaskId);
 
-        var failureReason = ExtractFailureReason(failureDataJson);
+        var failureReason = result.Error ?? "Unknown error";
 
         var failure = await _assignmentService.FailSubtaskAsync(
             subtaskId,
@@ -329,7 +340,7 @@ public class TaskHub : Hub
             throw new HubException("Unable to fail subtask for this provider.");
         }
 
-        var errorPayload = TryDeserializeResults(failureDataJson);
+        var errorPayload = new { error = result.Error };
 
         await BroadcastFailureAsync(
             Clients,
@@ -340,75 +351,113 @@ public class TaskHub : Hub
             errorPayload,
             Context.ConnectionAborted);
 
-        // If subtask was reassigned, try to dispatch it to another provider
         if (failure.WasReassigned)
         {
             await DispatchPendingSubtaskAsync(Context.ConnectionAborted);
         }
     }
 
-    public static Task OnSubtaskAccepted(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
+    public async Task ReportCachedModels(IReadOnlyList<string> modelUrls)
+    {
+        var providerUserId = RequireProvider();
+        
+        if (!ConnectionToDeviceMap.TryGetValue(Context.ConnectionId, out var deviceId))
+        {
+            _logger.LogWarning("ReportCachedModels called but no device registered for connection {ConnectionId}", Context.ConnectionId);
+            return;
+        }
+
+        _logger.LogInformation(
+            "ReportCachedModels received from device {DeviceId}, provider {ProviderId}: {ModelCount} models",
+            deviceId,
+            providerUserId,
+            modelUrls?.Count ?? 0);
+
+        // Update in-memory cache for fast dispatch lookup
+        var urlSet = new HashSet<string>(StringComparer.Ordinal);
+        if (modelUrls != null)
+        {
+            foreach (var url in modelUrls.Where(u => !string.IsNullOrWhiteSpace(u)))
+            {
+                urlSet.Add(url);
+            }
+        }
+        DeviceCachedModelUrls[deviceId] = urlSet;
+
+        if (modelUrls == null || modelUrls.Count == 0)
+        {
+            return;
+        }
+
+        // Remove existing cache entries for this device in DB
+        await _context.DeviceModelCaches
+            .Where(c => c.DeviceId == deviceId)
+            .ExecuteDeleteAsync(Context.ConnectionAborted);
+
+        // Add new cache entries for each reported model URL
+        var nowUtc = DateTime.UtcNow;
+        _context.DeviceModelCaches.AddRange(urlSet
+        .Select(modelUrl => new DeviceModelCache
+            {
+                DeviceId = deviceId,
+                ModelUrl = modelUrl,
+                CachedAtUtc = nowUtc,
+                LastAccessedAtUtc = nowUtc
+            }));
+
+        await _context.SaveChangesAsync(Context.ConnectionAborted);
+    }
+
+    public static Task OnSubtaskAccepted(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
     {
         if (hubContext is null)
-        {
             throw new ArgumentNullException(nameof(hubContext));
-        }
 
         return BroadcastSubtaskAcceptedAsync(hubContext.Clients, subtask, providerUserId, cancellationToken);
     }
 
-    public static Task OnProgressUpdate(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
+    public static Task OnProgressUpdate(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
     {
         if (hubContext is null)
-        {
             throw new ArgumentNullException(nameof(hubContext));
-        }
 
         return BroadcastProgressUpdateAsync(hubContext.Clients, subtask, providerUserId, cancellationToken);
     }
 
-    public static Task OnExecutionRequested(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
+    public static Task OnExecutionRequested(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
     {
         if (hubContext is null)
-        {
             throw new ArgumentNullException(nameof(hubContext));
-        }
 
         return BroadcastExecutionRequestedAsync(hubContext.Clients, subtask, providerUserId, cancellationToken);
     }
 
-    public static Task OnExecutionAcknowledged(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
+    public static Task OnExecutionAcknowledged(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, CancellationToken cancellationToken = default)
     {
         if (hubContext is null)
-        {
             throw new ArgumentNullException(nameof(hubContext));
-        }
 
         return BroadcastExecutionAcknowledgedAsync(hubContext.Clients, subtask, providerUserId, cancellationToken);
     }
 
-    public static Task OnComplete(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, bool isTaskCompleted, object? resultsPayload, CancellationToken cancellationToken = default)
+    public static Task OnComplete(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, bool isTaskCompleted, object? resultsPayload, CancellationToken cancellationToken = default)
     {
         if (hubContext is null)
-        {
             throw new ArgumentNullException(nameof(hubContext));
-        }
 
         return BroadcastCompletionAsync(hubContext.Clients, subtask, providerUserId, isTaskCompleted, resultsPayload, cancellationToken);
     }
 
-    public static Task OnFailure(IHubContext<TaskHub> hubContext, Subtask subtask, string providerUserId, bool wasReassigned, bool taskFailed, object? errorPayload, CancellationToken cancellationToken = default)
+    public static Task OnFailure(IHubContext<TaskHub, ITaskHubClient> hubContext, Subtask subtask, string providerUserId, bool wasReassigned, bool taskFailed, object? errorPayload, CancellationToken cancellationToken = default)
     {
         if (hubContext is null)
-        {
             throw new ArgumentNullException(nameof(hubContext));
-        }
 
         return BroadcastFailureAsync(hubContext.Clients, subtask, providerUserId, wasReassigned, taskFailed, errorPayload, cancellationToken);
     }
 
     private static async Task BroadcastSubtaskAcceptedAsync(
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         Subtask subtask,
         string providerUserId,
         CancellationToken cancellationToken)
@@ -416,37 +465,33 @@ public class TaskHub : Hub
         EnsureTaskLoaded(subtask);
 
         var dto = CreateSubtaskDto(subtask);
+        var taskDto = BuildTaskDto(subtask.Task!);
 
         var broadcasts = new List<Task>
         {
-            clients.Group(TaskGroupName(subtask.TaskId))
-                .SendAsync(OnSubtaskAcceptedEvent, dto, cancellationToken),
-            clients.Group(UserGroupName(subtask.Task!.UserId))
-                .SendAsync("TaskUpdated", BuildTaskDto(subtask.Task!), cancellationToken),
-            clients.Group(ProvidersGroupName)
-                .SendAsync(OnAvailableSubtasksChangedEvent, new
-                {
-                    SubtaskId = subtask.Id,
-                    TaskId = subtask.TaskId,
-                    Status = subtask.Status,
-                    AcceptedByProviderId = providerUserId,
-                    TimestampUtc = DateTime.UtcNow,
-                    Subtask = dto
-                }, cancellationToken)
+            clients.Group(TaskGroupName(subtask.TaskId)).OnSubtaskAccepted(dto),
+            clients.Group(UserGroupName(subtask.Task!.UserId)).TaskUpdated(taskDto),
+            clients.Group(ProvidersGroupName).OnAvailableSubtasksChanged(new AvailableSubtasksChangedDto
+            {
+                SubtaskId = subtask.Id,
+                TaskId = subtask.TaskId,
+                Status = subtask.Status,
+                AcceptedByProviderId = providerUserId,
+                TimestampUtc = DateTime.UtcNow,
+                Subtask = dto
+            })
         };
 
         if (!string.IsNullOrWhiteSpace(providerUserId))
         {
-            broadcasts.Add(
-                clients.Group(ProviderGroupName(providerUserId))
-                    .SendAsync(OnSubtaskAcceptedEvent, dto, cancellationToken));
+            broadcasts.Add(clients.Group(ProviderGroupName(providerUserId)).OnSubtaskAccepted(dto));
         }
 
         await Task.WhenAll(broadcasts);
     }
 
     private static async Task BroadcastProgressUpdateAsync(
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         Subtask subtask,
         string providerUserId,
         CancellationToken cancellationToken)
@@ -454,7 +499,7 @@ public class TaskHub : Hub
         var dto = CreateSubtaskDto(subtask);
         var heartbeatUtc = subtask.LastHeartbeatAt ?? DateTime.UtcNow;
 
-        var payload = new
+        var payload = new SubtaskProgressUpdateDto
         {
             Subtask = dto,
             ProviderUserId = providerUserId,
@@ -464,22 +509,19 @@ public class TaskHub : Hub
 
         var broadcasts = new List<Task>
         {
-            clients.Group(TaskGroupName(subtask.TaskId))
-                .SendAsync(OnProgressUpdateEvent, payload, cancellationToken)
+            clients.Group(TaskGroupName(subtask.TaskId)).OnProgressUpdate(payload)
         };
 
         if (!string.IsNullOrWhiteSpace(providerUserId))
         {
-            broadcasts.Add(
-                clients.Group(ProviderGroupName(providerUserId))
-                    .SendAsync(OnProgressUpdateEvent, payload, cancellationToken));
+            broadcasts.Add(clients.Group(ProviderGroupName(providerUserId)).OnProgressUpdate(payload));
         }
 
         await Task.WhenAll(broadcasts);
     }
 
     private static async Task BroadcastExecutionRequestedAsync(
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         Subtask subtask,
         string providerUserId,
         CancellationToken cancellationToken)
@@ -487,7 +529,7 @@ public class TaskHub : Hub
         EnsureTaskLoaded(subtask);
 
         var dto = CreateSubtaskDto(subtask);
-        var payload = new
+        var payload = new ExecutionRequestedDto
         {
             Subtask = dto,
             ProviderUserId = providerUserId,
@@ -496,22 +538,19 @@ public class TaskHub : Hub
 
         var broadcasts = new List<Task>
         {
-            clients.Group(UserGroupName(subtask.Task!.UserId))
-                .SendAsync("TaskUpdated", BuildTaskDto(subtask.Task!), cancellationToken)
+            clients.Group(UserGroupName(subtask.Task!.UserId)).TaskUpdated(BuildTaskDto(subtask.Task!))
         };
 
         if (!string.IsNullOrWhiteSpace(providerUserId))
         {
-            broadcasts.Add(
-                clients.Group(ProviderGroupName(providerUserId))
-                    .SendAsync(OnExecutionRequestedEvent, payload, cancellationToken));
+            broadcasts.Add(clients.Group(ProviderGroupName(providerUserId)).OnExecutionRequested(payload));
         }
 
         await Task.WhenAll(broadcasts);
     }
 
     private static async Task BroadcastExecutionAcknowledgedAsync(
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         Subtask subtask,
         string providerUserId,
         CancellationToken cancellationToken)
@@ -519,7 +558,7 @@ public class TaskHub : Hub
         EnsureTaskLoaded(subtask);
 
         var dto = CreateSubtaskDto(subtask);
-        var payload = new
+        var payload = new ExecutionAcknowledgedDto
         {
             Subtask = dto,
             ProviderUserId = providerUserId,
@@ -528,24 +567,20 @@ public class TaskHub : Hub
 
         var broadcasts = new List<Task>
         {
-            clients.Group(TaskGroupName(subtask.TaskId))
-                .SendAsync(OnExecutionAcknowledgedEvent, payload, cancellationToken),
-            clients.Group(UserGroupName(subtask.Task!.UserId))
-                .SendAsync("TaskUpdated", BuildTaskDto(subtask.Task!), cancellationToken)
+            clients.Group(TaskGroupName(subtask.TaskId)).OnExecutionAcknowledged(payload),
+            clients.Group(UserGroupName(subtask.Task!.UserId)).TaskUpdated(BuildTaskDto(subtask.Task!))
         };
 
         if (!string.IsNullOrWhiteSpace(providerUserId))
         {
-            broadcasts.Add(
-                clients.Group(ProviderGroupName(providerUserId))
-                    .SendAsync(OnExecutionAcknowledgedEvent, payload, cancellationToken));
+            broadcasts.Add(clients.Group(ProviderGroupName(providerUserId)).OnExecutionAcknowledged(payload));
         }
 
         await Task.WhenAll(broadcasts);
     }
 
     private static async Task BroadcastCompletionAsync(
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         Subtask subtask,
         string providerUserId,
         bool isTaskCompleted,
@@ -556,7 +591,7 @@ public class TaskHub : Hub
 
         var dto = CreateSubtaskDto(subtask);
 
-        var completionPayload = new
+        var completionPayload = new SubtaskCompletionDto
         {
             Subtask = dto,
             ProviderUserId = providerUserId,
@@ -566,41 +601,34 @@ public class TaskHub : Hub
 
         var broadcasts = new List<Task>
         {
-            clients.Group(TaskGroupName(subtask.TaskId))
-                .SendAsync(OnCompleteEvent, completionPayload, cancellationToken),
-            clients.Group(UserGroupName(subtask.Task!.UserId))
-                .SendAsync("TaskUpdated", BuildTaskDto(subtask.Task!), cancellationToken),
-            clients.Group(ProvidersGroupName)
-                .SendAsync(OnAvailableSubtasksChangedEvent, new
-                {
-                    SubtaskId = subtask.Id,
-                    TaskId = subtask.TaskId,
-                    Status = subtask.Status,
-                    CompletedByProviderId = providerUserId,
-                    TimestampUtc = DateTime.UtcNow,
-                    Subtask = dto
-                }, cancellationToken)
+            clients.Group(TaskGroupName(subtask.TaskId)).OnComplete(completionPayload),
+            clients.Group(UserGroupName(subtask.Task!.UserId)).TaskUpdated(BuildTaskDto(subtask.Task!)),
+            clients.Group(ProvidersGroupName).OnAvailableSubtasksChanged(new AvailableSubtasksChangedDto
+            {
+                SubtaskId = subtask.Id,
+                TaskId = subtask.TaskId,
+                Status = subtask.Status,
+                CompletedByProviderId = providerUserId,
+                TimestampUtc = DateTime.UtcNow,
+                Subtask = dto
+            })
         };
 
         if (!string.IsNullOrWhiteSpace(providerUserId))
         {
-            broadcasts.Add(
-                clients.Group(ProviderGroupName(providerUserId))
-                    .SendAsync(OnCompleteEvent, completionPayload, cancellationToken));
+            broadcasts.Add(clients.Group(ProviderGroupName(providerUserId)).OnComplete(completionPayload));
         }
 
         if (isTaskCompleted)
         {
-            broadcasts.Add(
-                clients.Group(TaskGroupName(subtask.Task!.Id))
-                    .SendAsync("TaskCompleted", BuildTaskDto(subtask.Task!), cancellationToken));
+            broadcasts.Add(clients.Group(TaskGroupName(subtask.Task!.Id)).TaskCompleted(BuildTaskDto(subtask.Task!)));
         }
 
         await Task.WhenAll(broadcasts);
     }
 
     private static async Task BroadcastFailureAsync(
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         Subtask subtask,
         string providerUserId,
         bool wasReassigned,
@@ -612,7 +640,7 @@ public class TaskHub : Hub
 
         var dto = CreateSubtaskDto(subtask);
 
-        var failurePayload = new
+        var failurePayload = new SubtaskFailureDto
         {
             Subtask = dto,
             ProviderUserId = providerUserId,
@@ -624,35 +652,28 @@ public class TaskHub : Hub
 
         var broadcasts = new List<Task>
         {
-            clients.Group(TaskGroupName(subtask.TaskId))
-                .SendAsync(OnFailureEvent, failurePayload, cancellationToken),
-            clients.Group(UserGroupName(subtask.Task!.UserId))
-                .SendAsync("TaskUpdated", BuildTaskDto(subtask.Task!), cancellationToken),
-            clients.Group(ProvidersGroupName)
-                .SendAsync(OnAvailableSubtasksChangedEvent, new
-                {
-                    SubtaskId = subtask.Id,
-                    TaskId = subtask.TaskId,
-                    Status = subtask.Status,
-                    FailedByProviderId = providerUserId,
-                    WasReassigned = wasReassigned,
-                    TimestampUtc = DateTime.UtcNow,
-                    Subtask = dto
-                }, cancellationToken)
+            clients.Group(TaskGroupName(subtask.TaskId)).OnFailure(failurePayload),
+            clients.Group(UserGroupName(subtask.Task!.UserId)).TaskUpdated(BuildTaskDto(subtask.Task!)),
+            clients.Group(ProvidersGroupName).OnAvailableSubtasksChanged(new AvailableSubtasksChangedDto
+            {
+                SubtaskId = subtask.Id,
+                TaskId = subtask.TaskId,
+                Status = subtask.Status,
+                FailedByProviderId = providerUserId,
+                WasReassigned = wasReassigned,
+                TimestampUtc = DateTime.UtcNow,
+                Subtask = dto
+            })
         };
 
         if (!string.IsNullOrWhiteSpace(providerUserId))
         {
-            broadcasts.Add(
-                clients.Group(ProviderGroupName(providerUserId))
-                    .SendAsync(OnFailureEvent, failurePayload, cancellationToken));
+            broadcasts.Add(clients.Group(ProviderGroupName(providerUserId)).OnFailure(failurePayload));
         }
 
         if (taskFailed)
         {
-            broadcasts.Add(
-                clients.Group(TaskGroupName(subtask.Task!.Id))
-                    .SendAsync("TaskFailed", BuildTaskDto(subtask.Task!), cancellationToken));
+            broadcasts.Add(clients.Group(TaskGroupName(subtask.Task!.Id)).TaskFailed(BuildTaskDto(subtask.Task!)));
         }
 
         await Task.WhenAll(broadcasts);
@@ -665,48 +686,6 @@ public class TaskHub : Hub
         if (subtask.Task is null)
         {
             throw new InvalidOperationException("Subtask.Task must be loaded prior to broadcasting.");
-        }
-    }
-
-    private static object? TryDeserializeResults(string? resultsJson)
-    {
-        if (string.IsNullOrWhiteSpace(resultsJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(resultsJson);
-            return document.RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            return new { raw = resultsJson };
-        }
-    }
-
-    private static string ExtractFailureReason(string? failureDataJson)
-    {
-        if (string.IsNullOrWhiteSpace(failureDataJson))
-        {
-            return "Unknown error";
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(failureDataJson);
-            if (document.RootElement.TryGetProperty("error", out var errorElement) &&
-                errorElement.ValueKind == JsonValueKind.String)
-            {
-                return errorElement.GetString() ?? "Unknown error";
-            }
-
-            return "Unknown error";
-        }
-        catch (JsonException)
-        {
-            return failureDataJson.Length > 200 ? failureDataJson.Substring(0, 200) : failureDataJson;
         }
     }
 
@@ -725,7 +704,7 @@ public class TaskHub : Hub
         => DispatchPendingSubtaskInternalAsync(_assignmentService, Clients, Groups, cancellationToken);
 
     public static Task DispatchPendingSubtaskAsync(
-        IHubContext<TaskHub> hubContext,
+        IHubContext<TaskHub, ITaskHubClient> hubContext,
         TaskAssignmentService assignmentService,
         CancellationToken cancellationToken = default)
     {
@@ -744,7 +723,7 @@ public class TaskHub : Hub
 
     private static async Task DispatchPendingSubtaskInternalAsync(
         TaskAssignmentService assignmentService,
-        IHubClients<IClientProxy> clients,
+        IHubClients<ITaskHubClient> clients,
         IGroupManager groups,
         CancellationToken cancellationToken)
     {
@@ -758,7 +737,15 @@ public class TaskHub : Hub
 
         foreach (var (deviceId, providerUserId) in sortedDevices)
         {
-            var assignment = await assignmentService.TryOfferNextSubtaskAsync(providerUserId, deviceId, cancellationToken);
+            // Get cached model URLs for this device (if any) for priority dispatch
+            DeviceCachedModelUrls.TryGetValue(deviceId, out var cachedUrls);
+            
+            var assignment = await assignmentService.TryOfferSubtaskWithCachedModelsAsync(
+                providerUserId, 
+                deviceId, 
+                cachedUrls,
+                cancellationToken);
+                
             if (assignment is null)
             {
                 continue;
@@ -798,8 +785,16 @@ public class TaskHub : Hub
     {
         if (string.IsNullOrWhiteSpace(providerUserId) || string.IsNullOrWhiteSpace(connectionId))
         {
-            return;
+             return;
         }
+        
+        ProviderConnections.AddOrUpdate(providerUserId, 
+            _ => new ConcurrentDictionary<string, Guid>(new[] { new KeyValuePair<string, Guid>(connectionId, Guid.Empty) }),
+            (_, dict) => 
+            {
+                dict.TryAdd(connectionId, Guid.Empty);
+                return dict;
+            });
 
         ConnectionToProviderMap[connectionId] = providerUserId;
 
@@ -858,25 +853,16 @@ public class TaskHub : Hub
         return (providerUserId, hasDevice ? deviceId : null, deviceStillConnected);
     }
 
-    /// <summary>
-    /// Gets the count of currently connected devices across all providers.
-    /// </summary>
     public static int GetConnectedNodesCount()
     {
         return DeviceConnections.Count;
     }
 
-    /// <summary>
-    /// Gets the count of currently connected providers.
-    /// </summary>
     public static int GetConnectedProvidersCount()
     {
         return ProviderConnections.Count(kvp => !kvp.Value.IsEmpty);
     }
 
-    /// <summary>
-    /// Gets detailed information about connected nodes including provider and device counts.
-    /// </summary>
     public static (int TotalDevices, int TotalProviders, int TotalConnections) GetConnectionStats()
     {
         var deviceCount = DeviceConnections.Count;
@@ -977,7 +963,6 @@ public class TaskHub : Hub
                 continue;
             }
 
-            // Get all unique device IDs for this provider
             var deviceIds = connections.Values
                 .Where(deviceId => deviceId != Guid.Empty)
                 .Distinct()
@@ -992,26 +977,45 @@ public class TaskHub : Hub
         return devices;
     }
 
-    private static List<(Guid DeviceId, string ProviderUserId)> GetDevicesSortedByRam(List<(Guid DeviceId, string ProviderUserId)> devices)
+    private static List<(Guid DeviceId, string ProviderUserId)> GetDevicesSortedByRam(List<(Guid DeviceId, string ProviderUserId)> devices, string? priorityModelUrl = null)
     {
-        var deviceRamPairs = new List<(Guid DeviceId, string ProviderUserId, long Ram)>();
+        var deviceRamPairs = new List<(Guid DeviceId, string ProviderUserId, long Ram, bool HasCachedModel)>();
 
         foreach (var (deviceId, providerUserId) in devices)
         {
-            // Get RAM from hardware capabilities in-memory storage
             var ram = DeviceHardwareCapabilities.TryGetValue(deviceId, out var capabilities)
                 ? capabilities.TotalRamBytes
                 : 0;
-            deviceRamPairs.Add((deviceId, providerUserId, ram));
+
+            var hasCachedModel = false;
+            if (!string.IsNullOrEmpty(priorityModelUrl) &&
+                DeviceCachedModelUrls.TryGetValue(deviceId, out var cachedUrls))
+            {
+                hasCachedModel = cachedUrls.Contains(priorityModelUrl);
+            }
+
+            deviceRamPairs.Add((deviceId, providerUserId, ram, hasCachedModel));
         }
 
-        // Sort by RAM descending (highest RAM first)
+        // Sort: devices with cached model first, then by RAM descending
         var sortedDevices = deviceRamPairs
-            .OrderByDescending(pair => pair.Ram)
+            .OrderByDescending(pair => pair.HasCachedModel)
+            .ThenByDescending(pair => pair.Ram)
             .Select(pair => (pair.DeviceId, pair.ProviderUserId))
             .ToList();
 
         return sortedDevices;
+    }
+
+    /// <summary>
+    /// Checks if a device has a specific model URL cached.
+    /// </summary>
+    public static bool DeviceHasModelCached(Guid deviceId, string modelUrl)
+    {
+        if (string.IsNullOrEmpty(modelUrl))
+            return false;
+
+        return DeviceCachedModelUrls.TryGetValue(deviceId, out var urls) && urls.Contains(modelUrl);
     }
 
     public static TaskDto BuildTaskDto(Data.Entities.Task task)

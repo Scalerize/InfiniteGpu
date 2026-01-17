@@ -1,4 +1,4 @@
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
 public sealed class ExecutionEnvironmentUpdate
 {

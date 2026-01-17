@@ -4,7 +4,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Features.Inference.Models;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Services;
 using MediatR;
 using Microsoft.EntityFrameworkCore;

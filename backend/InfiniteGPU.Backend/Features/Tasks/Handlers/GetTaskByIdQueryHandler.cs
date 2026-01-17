@@ -2,8 +2,8 @@ using MediatR;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Tasks.Queries;
-using InfiniteGPU.Backend.Shared.Models;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using InfiniteGPU.Contracts.Models;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -70,3 +70,4 @@ public class GetTaskByIdQueryHandler : IRequestHandler<GetTaskByIdQuery, TaskDto
         };
     }
 }
+

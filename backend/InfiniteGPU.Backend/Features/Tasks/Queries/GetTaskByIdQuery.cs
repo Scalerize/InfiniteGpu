@@ -1,5 +1,5 @@
 using MediatR;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 
 namespace InfiniteGPU.Backend.Features.Tasks.Queries;
 

@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 using System.Text.Json.Nodes;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 
 namespace InfiniteGPU.Backend.Features.Inference.Models;
 

@@ -5,10 +5,10 @@ using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Tasks.Commands;
 using InfiniteGPU.Backend.Shared.Hubs;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Services;
 using TaskEntity = InfiniteGPU.Backend.Data.Entities.Task;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -28,7 +28,7 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
     private readonly IMediator _mediator;
     private readonly IServiceScopeFactory _serviceScopeFactory;
     private readonly ILogger<CreateTaskCommandHandler> _logger;
-    private readonly IHubContext<TaskHub> _taskHubContext;
+    private readonly IHubContext<TaskHub, ITaskHubClient> _taskHubContext;
     private readonly TaskAssignmentService _assignmentService;
 
     public CreateTaskCommandHandler(
@@ -37,7 +37,7 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
         IMediator mediator,
         IServiceScopeFactory serviceScopeFactory,
         ILogger<CreateTaskCommandHandler> logger,
-        IHubContext<TaskHub> taskHubContext,
+        IHubContext<TaskHub, ITaskHubClient> taskHubContext,
         TaskAssignmentService assignmentService)
     {
         _context = context;
@@ -59,7 +59,8 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
 
         if (user.Balance <= 0)
         {
-            throw new InvalidOperationException("Insufficient balance. Please add funds to your account before creating tasks.");
+            throw new InvalidOperationException(
+                "Insufficient balance. Please add funds to your account before creating tasks.");
         }
 
         var now = DateTime.UtcNow;
@@ -169,7 +170,7 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
         var broadcasts = new List<Task>
         {
             _taskHubContext.Clients.Group(TaskHub.ProvidersGroupName)
-                .SendAsync(TaskHub.OnAvailableSubtasksChangedEvent, new
+                .OnAvailableSubtasksChanged(new AvailableSubtasksChangedDto
                 {
                     SubtaskId = subtask.Id,
                     TaskId = subtask.TaskId,
@@ -177,14 +178,14 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
                     CreatedByUserId = subtask.Task?.UserId,
                     TimestampUtc = timestampUtc,
                     Subtask = dto
-                }, cancellationToken)
+                })
         };
 
         if (subtask.Task is not null)
         {
             broadcasts.Add(
                 _taskHubContext.Clients.Group(TaskHub.UserGroupName(subtask.Task.UserId))
-                    .SendAsync("TaskUpdated", taskDto!, cancellationToken));
+                    .TaskUpdated(taskDto!));
         }
 
         await Task.WhenAll(broadcasts);

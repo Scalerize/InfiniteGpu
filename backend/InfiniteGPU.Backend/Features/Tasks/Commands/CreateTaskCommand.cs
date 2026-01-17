@@ -1,6 +1,6 @@
 using System;
 using MediatR;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 
 namespace InfiniteGPU.Backend.Features.Tasks.Commands;
 
@@ -53,3 +53,4 @@ public record CreateTaskCommand(
             string? FileUrl);
     }
 }
+

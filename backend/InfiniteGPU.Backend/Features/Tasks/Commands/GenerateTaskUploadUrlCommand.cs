@@ -1,4 +1,4 @@
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using InfiniteGPU.Backend.Shared.Services;
 using MediatR;
 

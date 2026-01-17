@@ -1,6 +1,6 @@
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Features.Subtasks.Queries;
-using InfiniteGPU.Backend.Shared.Models;
+using InfiniteGPU.Contracts.Models;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -51,3 +51,4 @@ public sealed class GetDeviceSubtasksQueryHandler : IRequestHandler<GetDeviceSub
         return subtasks.Select(s => SubtaskMapping.CreateDto(s, isRequestorView: false)).ToList();
     }
 }
+

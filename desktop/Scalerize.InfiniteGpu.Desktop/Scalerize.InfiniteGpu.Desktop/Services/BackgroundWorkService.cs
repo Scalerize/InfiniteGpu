@@ -15,15 +15,20 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using InfiniteGPU.Contracts;
+using InfiniteGPU.Contracts.Models;
+using TypedSignalR.Client;
+using TaskStatus = InfiniteGPU.Contracts.Models.TaskStatus;
+using TaskType = InfiniteGPU.Contracts.Models.TaskType;
 
 namespace Scalerize.InfiniteGpu.Desktop.Services
 {
     public sealed class BackgroundWorkService : IAsyncDisposable
     {
-        private const string ExecutionRequestedEventName = "OnExecutionRequested";
         private static readonly TimeSpan ConnectionRetryDelay = TimeSpan.FromSeconds(5);
         private static readonly TimeSpan NoTokenBackoff = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan ConnectionStatePollInterval = TimeSpan.FromSeconds(1);
+
         private static readonly JsonSerializerOptions SerializerOptions = new()
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -36,6 +41,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         private readonly OnnxParsingService _onnxParsingService;
         private readonly OnnxPartitionerService _onnxPartitionerService;
         private readonly HardwareMetricsService _hardwareMetricsService;
+        private readonly ModelCacheService _modelCacheService;
         private readonly HttpClient _httpClient;
         private readonly bool _ownsHttpClient;
         private readonly InputParsingService _inputParsingService;
@@ -48,27 +54,34 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         private Task? _workerLoopTask;
         private Channel<ExecutionQueueItem>? _workChannel;
         private HubConnection? _hubConnection;
-        private IDisposable? _executionRequestedSubscription;
+        private IDisposable? _hubConnectionDisposable;
         private string? _authToken;
         private int _tokenVersion;
 
         public BackgroundWorkService(DeviceIdentifierService deviceIdentifierService,
-        OnnxRuntimeService onnxRuntimeService,
-        HttpClient httpClient,
-         InputParsingService inputParsingService,
-          OutputParsingService outputParsingService,
-          OnnxParsingService onnxParsingService,
-          OnnxPartitionerService onnxPartitionerService,
-          HardwareMetricsService hardwareMetricsService)
+            OnnxRuntimeService onnxRuntimeService,
+            HttpClient httpClient,
+            InputParsingService inputParsingService,
+            OutputParsingService outputParsingService,
+            OnnxParsingService onnxParsingService,
+            OnnxPartitionerService onnxPartitionerService,
+            HardwareMetricsService hardwareMetricsService,
+            ModelCacheService modelCacheService)
         {
-            _deviceIdentifierService = deviceIdentifierService ?? throw new ArgumentNullException(nameof(deviceIdentifierService));
+            _deviceIdentifierService = deviceIdentifierService ??
+                                       throw new ArgumentNullException(nameof(deviceIdentifierService));
             _onnxRuntimeService = onnxRuntimeService ?? throw new ArgumentNullException(nameof(onnxRuntimeService));
             _inputParsingService = inputParsingService ?? throw new ArgumentNullException(nameof(inputParsingService));
-            _outputParsingService = outputParsingService ?? throw new ArgumentNullException(nameof(outputParsingService));
+            _outputParsingService =
+                outputParsingService ?? throw new ArgumentNullException(nameof(outputParsingService));
             _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
             _onnxParsingService = onnxParsingService ?? throw new ArgumentNullException(nameof(onnxParsingService));
-            _onnxPartitionerService = onnxPartitionerService ?? throw new ArgumentNullException(nameof(onnxPartitionerService));
-            _hardwareMetricsService = hardwareMetricsService ?? throw new ArgumentNullException(nameof(hardwareMetricsService));
+            _onnxPartitionerService =
+                onnxPartitionerService ?? throw new ArgumentNullException(nameof(onnxPartitionerService));
+            _hardwareMetricsService =
+                hardwareMetricsService ?? throw new ArgumentNullException(nameof(hardwareMetricsService));
+            _modelCacheService = modelCacheService ?? throw new ArgumentNullException(nameof(modelCacheService));
+            _modelCacheService.Initialize();
         }
 
         public void Start()
@@ -188,7 +201,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 if (string.IsNullOrWhiteSpace(_deviceIdentifier))
                 {
-                    _deviceIdentifier = await _deviceIdentifierService.GetOrCreateIdentifierAsync(cancellationToken).ConfigureAwait(false);
+                    _deviceIdentifier = await _deviceIdentifierService.GetOrCreateIdentifierAsync(cancellationToken)
+                        .ConfigureAwait(false);
                 }
 
                 var versionSnapshot = Volatile.Read(ref _tokenVersion);
@@ -198,7 +212,9 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 try
                 {
                     connection = BuildHubConnection(token, _deviceIdentifier!);
-                    RegisterHubHandlers(connection);
+
+                    // Strongly typed registration
+                    _hubConnectionDisposable = connection.Register<ITaskHubClient>(new TaskHubClientSubscriber(this));
 
                     var closedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     closedTask = closedTcs.Task;
@@ -227,7 +243,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                     var npuInfo = _hardwareMetricsService.GetNpuInfo();
                     var memoryInfo = _hardwareMetricsService.GetMemoryInfo();
 
-                    var hardwareCapabilities = new
+                    var hardwareCapabilities = new HardwareCapabilitiesDto
                     {
                         CpuEstimatedTops = cpuInfo.EstimatedTops,
                         GpuEstimatedTops = gpuInfo?.EstimatedTops,
@@ -235,7 +251,15 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         TotalRamBytes = (long)(memoryInfo.TotalGb.Value * 1024 * 1024 * 1024)
                     };
 
-                    await connection.InvokeAsync("JoinAvailableTasks", string.Empty, "Provider", hardwareCapabilities, cancellationToken).ConfigureAwait(false);
+                    var taskHub = connection.CreateHubProxy<ITaskHub>();
+                    await taskHub.JoinAvailableTasks(string.Empty, "Provider", hardwareCapabilities);
+
+                    // Report cached models to backend for priority dispatch
+                    var cachedModels = _modelCacheService.GetCachedModelUrls();
+                    if (cachedModels.Count > 0)
+                    {
+                        await taskHub.ReportCachedModels(cachedModels);
+                    }
 
                     while (!cancellationToken.IsCancellationRequested)
                     {
@@ -247,12 +271,16 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                             }
                             catch (Exception stopEx)
                             {
-                                Debug.WriteLine($"[BackgroundWorkService] Failed to stop hub connection during token refresh: {stopEx}");
+                                Debug.WriteLine(
+                                    $"[BackgroundWorkService] Failed to stop hub connection during token refresh: {stopEx}");
                             }
+
                             break;
                         }
 
-                        var completed = await Task.WhenAny(closedTask, Task.Delay(ConnectionStatePollInterval, cancellationToken)).ConfigureAwait(false);
+                        var completed = await Task
+                            .WhenAny(closedTask, Task.Delay(ConnectionStatePollInterval, cancellationToken))
+                            .ConfigureAwait(false);
                         if (completed == closedTask)
                         {
                             break;
@@ -270,8 +298,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 }
                 finally
                 {
-                    _executionRequestedSubscription?.Dispose();
-                    _executionRequestedSubscription = null;
+                    _hubConnectionDisposable?.Dispose();
+                    _hubConnectionDisposable = null;
 
                     if (connection is not null)
                     {
@@ -347,12 +375,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             }
         }
 
-        private void RegisterHubHandlers(HubConnection connection)
-        {
-            _executionRequestedSubscription = connection.On<ExecutionRequestedPayload>(ExecutionRequestedEventName, payload => HandleExecutionRequestedAsync(payload));
-        }
-
-        private Task HandleExecutionRequestedAsync(ExecutionRequestedPayload? payload)
+        // Implementation of ITaskHubClient logic delegator
+        private Task HandleExecutionRequestedAsync(ExecutionRequestedDto? payload)
         {
             if (payload?.Subtask is null)
             {
@@ -377,7 +401,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             return writer.WriteAsync(item, token).AsTask();
         }
 
-        private async Task ProcessExecutionRequestAsync(ExecutionRequestedPayload payload, CancellationToken cancellationToken)
+        private async Task ProcessExecutionRequestAsync(ExecutionRequestedDto payload,
+            CancellationToken cancellationToken)
         {
             var subtask = payload.Subtask;
             var authToken = Volatile.Read(ref _authToken);
@@ -385,27 +410,36 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 return;
 
             var connection = await WaitForActiveConnectionAsync(cancellationToken);
+            var taskHub = connection.CreateHubProxy<ITaskHub>(cancellationToken);
 
-            await connection.InvokeAsync("AcknowledgeExecutionStart", subtask.Id, cancellationToken);
-            await connection.InvokeAsync("ReportProgress", subtask.Id, 5, cancellationToken);
+
+            await taskHub.ReportProgress(subtask.Id, 5);
 
             Stopwatch stopwatch = null;
             try
             {
                 OnnxInferenceResult inferenceResult;
 
-                bool isTraining = subtask.ExecutionSpec?.TaskType == 0 && !string.IsNullOrEmpty(subtask.ExecutionSpec?.OptimizerModelUrl);
+                // subtask.TaskType is available directly on SubtaskDto
+                bool isTraining = subtask.TaskType == TaskType.Train &&
+                                  !string.IsNullOrEmpty(subtask.ExecutionSpec?.OptimizerModelUrl);
 
                 if (isTraining)
                 {
-                    var trainingModelBytes = await DownloadModelAsync(subtask.ExecutionSpec!.OnnxModelUrl!, cancellationToken);
-                    var optimizerModelBytes = await DownloadModelAsync(subtask.ExecutionSpec!.OptimizerModelUrl!, cancellationToken);
-                    var checkpointBytes = await DownloadModelAsync(subtask.ExecutionSpec!.CheckpointUrl!, cancellationToken);
-                    var evalModelBytes = await DownloadModelAsync(subtask.ExecutionSpec!.EvalModelUrl!, cancellationToken);
+                    var trainingModelBytes =
+                        await DownloadModelAsync(subtask.ExecutionSpec!.OnnxModelUrl!, cancellationToken);
+                    var optimizerModelBytes =
+                        await DownloadModelAsync(subtask.ExecutionSpec!.OptimizerModelUrl!, cancellationToken);
+                    var checkpointBytes =
+                        await DownloadModelAsync(subtask.ExecutionSpec!.CheckpointUrl!, cancellationToken);
+                    var evalModelBytes =
+                        await DownloadModelAsync(subtask.ExecutionSpec!.EvalModelUrl!, cancellationToken);
 
                     stopwatch = Stopwatch.StartNew();
-                    var inputs = await _inputParsingService.BuildNamedInputsAsync(subtask.ParametersJson, cancellationToken);
-                    var outputs = await _inputParsingService.BuildNamedOutputsAsync(subtask.ParametersJson, cancellationToken);
+                    var inputs =
+                        await _inputParsingService.BuildNamedInputsAsync(subtask.ParametersJson, cancellationToken);
+                    var outputs =
+                        await _inputParsingService.BuildNamedOutputsAsync(subtask.ParametersJson, cancellationToken);
 
                     inferenceResult = await _onnxRuntimeService.ExecuteTrainingSessionAsync(
                         trainingModelBytes,
@@ -418,7 +452,16 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 }
                 else
                 {
-                    var modelBytes = await DownloadModelAsync(subtask.OnnxModel?.ReadUri ?? subtask.ExecutionSpec?.OnnxModelUrl ?? string.Empty, cancellationToken);
+                    var modelUrl = subtask.OnnxModel?.ReadUri ?? subtask.ExecutionSpec?.OnnxModelUrl ?? string.Empty;
+                    
+                    // Try to get model from cache first
+                    var modelBytes = await _modelCacheService.TryGetCachedModelAsync(modelUrl, cancellationToken);
+                    if (modelBytes == null)
+                    {
+                        modelBytes = await DownloadModelAsync(modelUrl, cancellationToken);
+                        // Cache the downloaded model for future use
+                        await _modelCacheService.CacheModelAsync(modelUrl, modelBytes, cancellationToken);
+                    }
 
                     stopwatch = Stopwatch.StartNew();
                     var inputs = await _inputParsingService.BuildNamedInputsAsync(
@@ -438,22 +481,20 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
                 stopwatch?.Stop();
 
-                var resultPayload = new
+                var submitResult = new SubmitResultDto
                 {
-                    subtaskId = subtask.Id,
-                    completedAtUtc = DateTimeOffset.UtcNow,
-                    metrics = new
+                    SubtaskId = subtask.Id,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    Metrics = new ExecutionMetricsDto
                     {
-                        durationSeconds = stopwatch.Elapsed.TotalSeconds,
-                        device = _onnxRuntimeService.GetExecutionProvider().ToString().ToLowerInvariant(),
-                        memoryGBytes = _hardwareMetricsService.GetMemoryInfo().TotalGb.Value
+                        DurationSeconds = stopwatch.Elapsed.TotalSeconds,
+                        Device = _onnxRuntimeService.GetExecutionProvider().ToString().ToLowerInvariant(),
+                        MemoryGBytes = _hardwareMetricsService.GetMemoryInfo().TotalGb.Value
                     },
-                    outputs = processedOutputs
+                    Outputs = processedOutputs
                 };
 
-                var resultJson = JsonSerializer.Serialize(resultPayload, SerializerOptions);
-
-                await connection.InvokeAsync("SubmitResult", subtask.Id, resultJson, cancellationToken);
+                await taskHub.SubmitResult(submitResult);
             }
             catch (OperationCanceledException)
             {
@@ -463,18 +504,16 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             {
                 Debug.WriteLine($"[BackgroundWorkService] Execution failed for subtask {subtask.Id}: {ex}");
 
-                var errorPayload = new
+                var failedResult = new FailedResultDto
                 {
-                    subtaskId = subtask.Id,
-                    failedAtUtc = DateTimeOffset.UtcNow,
-                    error = ex.Message
+                    SubtaskId = subtask.Id,
+                    FailedAtUtc = DateTimeOffset.UtcNow,
+                    Error = ex.Message
                 };
-
-                var errorJson = JsonSerializer.Serialize(errorPayload, SerializerOptions);
 
                 try
                 {
-                    await connection.InvokeAsync("FailedResult", subtask.Id, errorJson, cancellationToken);
+                    await taskHub.FailedResult(failedResult);
                 }
                 catch (Exception submitEx)
                 {
@@ -529,13 +568,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
 
         private HubConnection BuildHubConnection(string token, string deviceIdentifier)
         {
-            var hubUri = new Uri(Constants.Constants.BackendBaseUri, $"taskhub?deviceIdentifier={Uri.EscapeDataString(deviceIdentifier)}");
+            var hubUri = new Uri(Constants.Constants.BackendBaseUri,
+                $"taskhub?deviceIdentifier={Uri.EscapeDataString(deviceIdentifier)}");
 
             return new HubConnectionBuilder()
-                .WithUrl(hubUri, options =>
-                {
-                    options.AccessTokenProvider = () => Task.FromResult(token)!;
-                })
+                .WithUrl(hubUri, options => { options.AccessTokenProvider = () => Task.FromResult(token)!; })
                 .WithAutomaticReconnect()
                 .AddJsonProtocol(options => options.PayloadSerializerOptions.PropertyNameCaseInsensitive = true)
                 .Build();
@@ -551,8 +588,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 _hubConnection = null;
             }
 
-            _executionRequestedSubscription?.Dispose();
-            _executionRequestedSubscription = null;
+            _hubConnectionDisposable?.Dispose();
+            _hubConnectionDisposable = null;
 
             if (connection is null)
             {
@@ -586,7 +623,9 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             if (TryCreateUri(uriString, out var uri))
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                using var response = await _httpClient
+                    .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
+                    .ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
                 return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
             }
@@ -594,7 +633,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             throw new InvalidOperationException($"Invalid URI: {uriString}");
         }
 
-        private static Uri? ResolveModelUri(SubtaskPayload subtask)
+        private static Uri? ResolveModelUri(SubtaskDto subtask)
         {
             if (TryCreateUri(subtask.OnnxModel?.ReadUri, out var readUri))
             {
@@ -628,67 +667,39 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             return false;
         }
 
-        private static HttpClient CreateDefaultHttpClient()
+        private sealed record ExecutionQueueItem(ExecutionRequestedDto Payload);
+
+        // Implementing ITaskHubClient for Strong Typing
+        private sealed class TaskHubClientSubscriber : ITaskHubClient
         {
-            var handler = new HttpClientHandler
+            private readonly BackgroundWorkService _service;
+
+            public TaskHubClientSubscriber(BackgroundWorkService service)
             {
-                AutomaticDecompression = DecompressionMethods.All
-            };
+                _service = service;
+            }
 
-            var client = new HttpClient(handler)
+            public Task OnExecutionRequested(ExecutionRequestedDto payload)
             {
-                Timeout = TimeSpan.FromMinutes(2),
-                BaseAddress = Constants.Constants.BackendBaseUri
-            };
+                return _service.HandleExecutionRequestedAsync(payload);
+            }
 
-            return client;
+            public Task OnSubtaskAccepted(SubtaskDto subtask) => Task.CompletedTask;
+            public Task OnProgressUpdate(SubtaskProgressUpdateDto payload) => Task.CompletedTask;
+            public Task OnExecutionAcknowledged(ExecutionAcknowledgedDto payload) => Task.CompletedTask;
+            public Task OnComplete(SubtaskCompletionDto payload) => Task.CompletedTask;
+            public Task OnFailure(SubtaskFailureDto payload) => Task.CompletedTask;
+            public Task OnAvailableSubtasksChanged(AvailableSubtasksChangedDto payload) => Task.CompletedTask;
+            public Task TaskUpdated(TaskDto task) => Task.CompletedTask;
+            public Task TaskCompleted(TaskDto task) => Task.CompletedTask;
+            public Task TaskFailed(TaskDto task) => Task.CompletedTask;
         }
-
-        private sealed record ExecutionQueueItem(ExecutionRequestedPayload Payload);
-
-        private sealed class ExecutionRequestedPayload
-        {
-            public SubtaskPayload Subtask { get; init; } = new();
-            public string ProviderUserId { get; init; } = string.Empty;
-            public DateTime RequestedAtUtc { get; init; }
-        }
-
-        private sealed class SubtaskPayload
-        {
-            public Guid Id { get; init; }
-            public Guid TaskId { get; init; }
-            public string ParametersJson { get; init; } = "{}";
-            public ExecutionSpecPayload? ExecutionSpec { get; init; }
-            public ExecutionStatePayload? ExecutionState { get; init; }
-            public OnnxModelPayload? OnnxModel { get; init; }
-        }
-
-        private sealed class ExecutionSpecPayload
-        {
-            public string? OnnxModelUrl { get; init; }
-            public string? OptimizerModelUrl { get; init; }
-            public string? CheckpointUrl { get; init; }
-            public string? EvalModelUrl { get; init; }
-            public int TaskType { get; init; }
-        }
-
-        private sealed class ExecutionStatePayload
-        {
-            public IDictionary<string, JsonElement>? ExtendedMetadata { get; init; }
-        }
-
-        private sealed class OnnxModelPayload
-        {
-            public string? ResolvedReadUri { get; init; }
-            public string? ReadUri { get; init; }
-        }
-
     }
+
     public enum ExecutionProviderDevice
     {
         Cpu,
         Gpu,
         Npu
     }
-
 }

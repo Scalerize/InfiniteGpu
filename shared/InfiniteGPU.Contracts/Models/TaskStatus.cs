@@ -1,8 +1,8 @@
 using System.ComponentModel;
 
-namespace InfiniteGPU.Backend.Shared.Models;
+namespace InfiniteGPU.Contracts.Models;
 
-public enum SubtaskStatus
+public enum TaskStatus
 {
     [Description("Pending")]
     Pending = 0,
@@ -10,8 +10,8 @@ public enum SubtaskStatus
     [Description("Assigned")]
     Assigned = 1,
 
-    [Description("Executing")]
-    Executing = 2,
+    [Description("InProgress")]
+    InProgress = 2,
 
     [Description("Completed")]
     Completed = 3,

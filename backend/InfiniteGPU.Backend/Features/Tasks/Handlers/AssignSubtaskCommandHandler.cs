@@ -2,8 +2,8 @@ using MediatR;
 using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Data.Entities;
 using InfiniteGPU.Backend.Features.Tasks.Commands;
-using TaskStatusEnum = InfiniteGPU.Backend.Shared.Models.TaskStatus;
-using SubtaskStatusEnum = InfiniteGPU.Backend.Shared.Models.SubtaskStatus;
+using TaskStatusEnum = InfiniteGPU.Contracts.Models.TaskStatus;
+using SubtaskStatusEnum = InfiniteGPU.Contracts.Models.SubtaskStatus;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -69,3 +69,4 @@ public class AssignSubtaskCommandHandler : IRequestHandler<AssignSubtaskCommand,
         return true;
     }
 }
+

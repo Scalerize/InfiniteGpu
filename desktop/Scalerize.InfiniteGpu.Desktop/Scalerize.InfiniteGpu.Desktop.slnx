@@ -4,6 +4,7 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
+  <Project Path="../../shared/InfiniteGPU.Contracts/InfiniteGPU.Contracts.csproj" />
   <Project Path="Scalerize.InfiniteGpu.Desktop/Scalerize.InfiniteGpu.Desktop.csproj">
     <Platform Solution="*|ARM64" Project="ARM64" />
     <Platform Solution="*|x64" Project="x64" />
