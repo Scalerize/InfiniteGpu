@@ -88,3 +88,14 @@ export const updateProfile = async (payload: UpdateProfileRequest): Promise<Upda
     authenticated: true
   });
 };
+
+export interface ApiKeyResponse {
+  apiKey: string;
+}
+
+export const getApiKey = async (): Promise<string> => {
+  const response = await apiRequest<ApiKeyResponse>('/api/auth/api-key', {
+    authenticated: true,
+  });
+  return response.apiKey;
+};

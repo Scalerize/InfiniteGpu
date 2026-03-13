@@ -2,12 +2,14 @@ import {
   type AriaAttributes,
   type FormEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
 } from "react";
-import { CirclePlus, Copy, NotebookPen, Trash2 } from "lucide-react";
+import { Check, CirclePlus, Copy, NotebookPen, Trash2 } from "lucide-react";
 import {
   createTask,
   generateTaskUploadUrl,
@@ -15,6 +17,7 @@ import {
   TaskUploadFileType,
   type CreateTaskRequestBody,
 } from "../api";
+import { getApiKey } from "../../auth/api";
 import { SelectDropdown } from "../../../shared/components/SelectDropdown";
 import { FileDropzone } from "../../../shared/components/FileDropzone";
 import { DialogShell } from "../../../shared/components/DialogShell";
@@ -177,8 +180,36 @@ export const NewTaskRequestDialog = ({
   const [inferenceBindingMode, setInferenceBindingMode] = useState<
     "manual" | "api"
   >("manual");
-  const publicApiDocUrl = "https://docs.scalerize.ai/public-inference-api";
-  const maskedPublicApiKey = "pk-live-******-tenant";
+  const publicApiDocUrl = "/public-inference-api.html";
+  const [realApiKey, setRealApiKey] = useState<string | null>(null);
+  const [apiKeyCopied, setApiKeyCopied] = useState(false);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Fetch real API key when user switches to API binding mode
+  useEffect(() => {
+    if (inferenceBindingMode === "api" && realApiKey === null) {
+      getApiKey()
+        .then((key) => setRealApiKey(key))
+        .catch(() => setRealApiKey("Error loading key"));
+    }
+  }, [inferenceBindingMode, realApiKey]);
+
+  const handleCopyApiKey = useCallback(() => {
+    if (!realApiKey || realApiKey === "Error loading key") return;
+    navigator.clipboard.writeText(realApiKey).then(() => {
+      setApiKeyCopied(true);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = setTimeout(() => setApiKeyCopied(false), 2000);
+    });
+  }, [realApiKey]);
+
+  const maskedApiKey = useMemo(() => {
+    if (!realApiKey) return "Loading…";
+    if (realApiKey === "Error loading key") return realApiKey;
+    // Show first 6 and last 6 chars, mask the rest
+    if (realApiKey.length <= 16) return realApiKey;
+    return `${realApiKey.slice(0, 8)}${"•".repeat(8)}${realApiKey.slice(-6)}`;
+  }, [realApiKey]);
   const [trainingDataset, setTrainingDataset] =
     useState<DatasetConfig>(createDatasetConfig);
   const [validationDataset, setValidationDataset] =
@@ -703,49 +734,67 @@ export const NewTaskRequestDialog = ({
       >["bindings"] = [];
 
       if (selectedMode === "inference") {
-        for (const binding of inferenceBindings) {
-          if (!binding.tensorName.trim()) {
-            throw new Error("Every inference binding requires a tensor name.");
+        if (fillBindingsViaApi) {
+          // API mode – only send binding definitions (no file uploads needed)
+          for (const binding of inferenceBindings) {
+            if (!binding.tensorName.trim()) {
+              throw new Error("Every inference binding requires a tensor name.");
+            }
+            bindings.push({
+              tensorName: binding.tensorName,
+              payloadType: mapPayloadType[binding.payloadType],
+              payload: null,
+              fileUrl: null,
+              maxLength: binding.payloadType === "text" ? binding.maxLength : undefined,
+              padding: binding.payloadType === "text" ? true : undefined,
+            });
           }
+        } else {
+          // Manual mode – upload files for each binding
+          for (const binding of inferenceBindings) {
+            if (!binding.tensorName.trim()) {
+              throw new Error("Every inference binding requires a tensor name.");
+            }
 
-          if (!binding.file) {
-            throw new Error(
-              `Binding "${binding.tensorName}" is missing an uploaded file.`
+            if (!binding.file) {
+              throw new Error(
+                `Binding "${binding.tensorName}" is missing an uploaded file.`
+              );
+            }
+
+            setSubmissionStage(
+              `Preparing upload slot for "${binding.tensorName}"…`
             );
+            
+            // Determine file extension based on payload type
+            let tensorFileExtension = getFileExtension(binding.file.name ?? "");
+            if (!tensorFileExtension) {
+              tensorFileExtension = binding.payloadType === "json" ? "json" :
+                                   binding.payloadType === "text" ? "txt" : "bin";
+            }
+
+            const tensorUploadUrl = await generateTaskUploadUrl({
+              taskId,
+              subtaskId: resolvedSubtaskId,
+              inputName: binding.tensorName,
+              fileExtension: tensorFileExtension,
+              fileType: TaskUploadFileType.Input,
+            });
+
+            setSubmissionStage(
+              `Uploading "${binding.tensorName}"…`
+            );
+            await uploadFileToSas(tensorUploadUrl.uploadUri, binding.file);
+
+            bindings.push({
+              tensorName: binding.tensorName,
+              payloadType: "Binary",
+              payload: null,
+              fileUrl: tensorUploadUrl.blobUri,
+              maxLength: binding.payloadType === "text" ? binding.maxLength : undefined,
+              padding: binding.payloadType === "text" ? true : undefined,
+            });
           }
-
-          setSubmissionStage(
-            `Preparing upload slot for "${binding.tensorName}"…`
-          );
-          
-          // Determine file extension based on payload type
-          let tensorFileExtension = getFileExtension(binding.file.name ?? "");
-          if (!tensorFileExtension) {
-            tensorFileExtension = binding.payloadType === "json" ? "json" :
-                                 binding.payloadType === "text" ? "txt" : "bin";
-          }
-
-          const tensorUploadUrl = await generateTaskUploadUrl({
-            taskId,
-            subtaskId: resolvedSubtaskId,
-            inputName: binding.tensorName,
-            fileExtension: tensorFileExtension,
-            fileType: TaskUploadFileType.Input,
-          });
-
-          setSubmissionStage(
-            `Uploading "${binding.tensorName}"…`
-          );
-          await uploadFileToSas(tensorUploadUrl.uploadUri, binding.file);
-
-          bindings.push({
-            tensorName: binding.tensorName,
-            payloadType: "Binary",
-            payload: null,
-            fileUrl: tensorUploadUrl.blobUri,
-            maxLength: binding.payloadType === "text" ? binding.maxLength : undefined,
-            padding: binding.payloadType === "text" ? true : undefined,
-          });
         }
       }
 
@@ -1434,14 +1483,29 @@ artifacts.generate_artifacts(model,
                     </h5>
                     <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 shadow-sm">
                       <span className="flex-1 truncate font-mono text-xs text-slate-600">
-                        {maskedPublicApiKey}
+                        {maskedApiKey}
                       </span>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-slate-600 transition hover:bg-slate-100"
+                        onClick={handleCopyApiKey}
+                        disabled={!realApiKey || realApiKey === "Error loading key"}
+                        className={`relative inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-semibold uppercase tracking-wide transition ${
+                          apiKeyCopied
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-600"
+                            : "border-slate-200 text-slate-600 hover:bg-slate-100"
+                        } disabled:cursor-not-allowed disabled:opacity-50`}
                       >
-                        <Copy className="h-3.5 w-3.5" />
-                        Copy
+                        {apiKeyCopied ? (
+                          <>
+                            <Check className="h-3.5 w-3.5" />
+                            Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            Copy
+                          </>
+                        )}
                       </button>
                     </div>
                   </div>

@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Public Inference API | InfiniteGPU Documentation</title>
+  <meta name="description"
+    content="API reference for the InfiniteGPU public inference endpoints. Submit inference requests and poll results using your API key." />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            slate: { 925: "#0B1220" },
+            brand: {
+              50: "#EEF2FF",
+              100: "#E0E7FF",
+              200: "#C7D2FE",
+              500: "#5B7BFF",
+              600: "#4357F5",
+              700: "#2D3AD7",
+              900: "#141B3C",
+            },
+          },
+          fontFamily: {
+            sans: ["Inter", "system-ui", "sans-serif"],
+            mono: ["JetBrains Mono", "Menlo", "monospace"],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    .code-block { tab-size: 2; }
+    .copy-btn:active { transform: scale(0.95); }
+    .badge-get { background: #065f46; color: #6ee7b7; }
+    .badge-post { background: #1e3a5f; color: #93c5fd; }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 antialiased">
+  <div class="relative overflow-hidden">
+    <!-- Background effects -->
+    <div class="pointer-events-none absolute inset-0 -z-10">
+      <div
+        class="absolute left-1/2 top-[-20%] h-[30rem] w-[30rem] -translate-x-1/2 rounded-full bg-gradient-to-br from-indigo-500/15 via-purple-500/10 to-transparent blur-[120px]">
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="border-b border-slate-800/60 px-6 py-5 sm:px-12 lg:px-20">
+      <nav class="mx-auto flex max-w-5xl items-center justify-between">
+        <a href="/" class="flex items-center gap-3 transition hover:opacity-80">
+          <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-lg">
+            <img src="/logo-blue.png" alt="InfiniteGPU logo" class="h-7 w-7" />
+          </div>
+          <div>
+            <p class="text-sm font-semibold uppercase tracking-[0.25em] text-brand-200">InfiniteGPU</p>
+            <p class="text-xs text-slate-400">Public API Reference</p>
+          </div>
+        </a>
+        <div class="hidden items-center gap-5 text-sm font-medium text-slate-300 md:flex">
+          <a class="transition hover:text-white" href="#authentication">Auth</a>
+          <a class="transition hover:text-white" href="#submit-inference">Submit</a>
+          <a class="transition hover:text-white" href="#poll-result">Poll</a>
+          <a class="transition hover:text-white" href="#examples">Examples</a>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Hero -->
+    <section class="px-6 py-16 sm:px-12 lg:px-20">
+      <div class="mx-auto max-w-5xl">
+        <p
+          class="mb-4 inline-flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-brand-100">
+          API Reference
+        </p>
+        <h1 class="text-3xl font-bold tracking-tight text-white sm:text-4xl">
+          Public Inference API
+        </h1>
+        <p class="mt-4 max-w-2xl text-lg leading-relaxed text-slate-300">
+          Submit ONNX inference requests and retrieve results through a simple, synchronous REST API.
+          Authenticate with your API key and start running inference in minutes.
+        </p>
+        <div class="mt-6 flex flex-wrap gap-3">
+          <span
+            class="inline-flex items-center rounded-md bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 ring-1 ring-slate-700">
+            Base URL: <code class="ml-1.5 font-mono text-brand-200">https://infinite-gpu-backend-bvh8a7c3fdgxd7c5.canadacentral-01.azurewebsites.net</code>
+          </span>
+          <span
+            class="inline-flex items-center rounded-md bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-300 ring-1 ring-slate-700">
+            Content-Type: <code class="ml-1.5 font-mono text-brand-200">application/json</code>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Authentication -->
+    <section id="authentication" class="border-t border-slate-800/60 px-6 py-14 sm:px-12 lg:px-20">
+      <div class="mx-auto max-w-5xl">
+        <h2 class="text-2xl font-bold text-white">Authentication</h2>
+        <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+          Every request must include your API key in the <code
+            class="rounded bg-slate-800 px-1.5 py-0.5 font-mono text-xs text-brand-200">X-Api-Key</code> header.
+          Your API key is generated when you register and can be found in the task creation dialog when selecting
+          <em>"Fill by API"</em> mode.
+        </p>
+        <div class="mt-6 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-yellow-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-green-500/60"></span>
+            <span class="ml-2 text-xs text-slate-500">Request header</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300"><span class="text-slate-500">// Include in every request</span>
+<span class="text-brand-200">X-Api-Key</span>: <span class="text-emerald-400">pk-xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</span></pre>
+        </div>
+        <div class="mt-4 rounded-lg border border-amber-900/50 bg-amber-950/30 p-4">
+          <p class="text-xs font-semibold uppercase tracking-wide text-amber-400">⚠ Security</p>
+          <p class="mt-1 text-sm text-amber-200/80">
+            Keep your API key secret. Do not expose it in client-side code or public repositories.
+            Rotate your key from the console if you suspect it has been compromised.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Submit Inference -->
+    <section id="submit-inference" class="border-t border-slate-800/60 px-6 py-14 sm:px-12 lg:px-20">
+      <div class="mx-auto max-w-5xl">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="badge-post rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wider">POST</span>
+          <h2 class="text-2xl font-bold text-white">Submit Inference</h2>
+        </div>
+        <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+          Submit an inference request to an existing task that has been configured with <em>"Fill by API"</em> mode.
+          The request blocks until the inference completes (up to 180 seconds), then returns the result synchronously.
+        </p>
+
+        <!-- Endpoint -->
+        <div class="mt-6 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="badge-post rounded px-2 py-0.5 text-[11px] font-bold uppercase">POST</span>
+            <code class="font-mono text-sm text-slate-200">/api/inference/tasks/{taskId}</code>
+          </div>
+        </div>
+
+        <!-- Path Parameters -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Path Parameters</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/50">
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Parameter</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Type</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">taskId</td>
+                <td class="px-4 py-2.5 text-slate-400">GUID</td>
+                <td class="px-4 py-2.5 text-slate-400">The ID of the task created with <code
+                    class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-slate-300">fillBindingsViaApi: true</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Request Body -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Request Body</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/50">
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Field</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Type</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Required</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Description</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60">
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">bindings</td>
+                <td class="px-4 py-2.5 text-slate-400">array</td>
+                <td class="px-4 py-2.5"><span
+                    class="rounded bg-emerald-950 px-1.5 py-0.5 text-xs font-semibold text-emerald-400">Yes</span></td>
+                <td class="px-4 py-2.5 text-slate-400">Array of input tensor bindings to feed into the ONNX graph</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">bindings[].tensorName</td>
+                <td class="px-4 py-2.5 text-slate-400">string</td>
+                <td class="px-4 py-2.5"><span
+                    class="rounded bg-emerald-950 px-1.5 py-0.5 text-xs font-semibold text-emerald-400">Yes</span></td>
+                <td class="px-4 py-2.5 text-slate-400">Name of the input tensor as defined in the ONNX model</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">bindings[].payloadType</td>
+                <td class="px-4 py-2.5 text-slate-400">string</td>
+                <td class="px-4 py-2.5"><span
+                    class="rounded bg-emerald-950 px-1.5 py-0.5 text-xs font-semibold text-emerald-400">Yes</span></td>
+                <td class="px-4 py-2.5 text-slate-400">
+                  One of: <code class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-slate-300">Json</code>,
+                  <code class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-slate-300">Text</code>,
+                  <code class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-slate-300">Binary</code>
+                </td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">bindings[].payload</td>
+                <td class="px-4 py-2.5 text-slate-400">string | null</td>
+                <td class="px-4 py-2.5"><span
+                    class="rounded bg-slate-800 px-1.5 py-0.5 text-xs font-semibold text-slate-400">Conditional</span>
+                </td>
+                <td class="px-4 py-2.5 text-slate-400">Inline payload data. Required for <code
+                    class="font-mono text-xs">Json</code> and <code class="font-mono text-xs">Text</code> payload
+                  types</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">bindings[].fileUrl</td>
+                <td class="px-4 py-2.5 text-slate-400">string | null</td>
+                <td class="px-4 py-2.5"><span
+                    class="rounded bg-slate-800 px-1.5 py-0.5 text-xs font-semibold text-slate-400">Conditional</span>
+                </td>
+                <td class="px-4 py-2.5 text-slate-400">URL pointing to a binary file. Required for <code
+                    class="font-mono text-xs">Binary</code> payload type</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Request Example -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Request Example</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center justify-between border-b border-slate-800 px-4 py-2">
+            <div class="flex items-center gap-2">
+              <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+              <span class="h-2.5 w-2.5 rounded-full bg-yellow-500/60"></span>
+              <span class="h-2.5 w-2.5 rounded-full bg-green-500/60"></span>
+              <span class="ml-2 text-xs text-slate-500">cURL</span>
+            </div>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300">curl -X POST https://infinite-gpu-backend-bvh8a7c3fdgxd7c5.canadacentral-01.azurewebsites.net/api/inference/tasks/<span class="text-amber-400">{taskId}</span> \
+  -H <span class="text-emerald-400">"Content-Type: application/json"</span> \
+  -H <span class="text-emerald-400">"X-Api-Key: pk-xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"</span> \
+  -d <span class="text-emerald-400">'{
+  "bindings": [
+    {
+      "tensorName": "input_ids",
+      "payloadType": "Json",
+      "payload": "[[101, 2054, 2003, 1996, 3007, 1997, 2605, 102]]",
+      "fileUrl": null
+    },
+    {
+      "tensorName": "attention_mask",
+      "payloadType": "Json",
+      "payload": "[[1, 1, 1, 1, 1, 1, 1, 1]]",
+      "fileUrl": null
+    }
+  ]
+}'</span></pre>
+        </div>
+
+        <!-- Binary Example -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Binary Payload Example</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center justify-between border-b border-slate-800 px-4 py-2">
+            <div class="flex items-center gap-2">
+              <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+              <span class="h-2.5 w-2.5 rounded-full bg-yellow-500/60"></span>
+              <span class="h-2.5 w-2.5 rounded-full bg-green-500/60"></span>
+              <span class="ml-2 text-xs text-slate-500">cURL – binary tensor via URL</span>
+            </div>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300">curl -X POST https://infinite-gpu-backend-bvh8a7c3fdgxd7c5.canadacentral-01.azurewebsites.net/api/inference/tasks/<span class="text-amber-400">{taskId}</span> \
+  -H <span class="text-emerald-400">"Content-Type: application/json"</span> \
+  -H <span class="text-emerald-400">"X-Api-Key: pk-xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"</span> \
+  -d <span class="text-emerald-400">'{
+  "bindings": [
+    {
+      "tensorName": "image",
+      "payloadType": "Binary",
+      "payload": null,
+      "fileUrl": "https://your-storage.blob.core.windows.net/inputs/image.npy"
+    }
+  ]
+}'</span></pre>
+        </div>
+
+        <!-- Response -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Response</h3>
+        <p class="mt-2 text-sm text-slate-400">
+          The endpoint blocks until inference completes or times out (180s). The response always includes:
+        </p>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/50">
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Field</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Type</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Description</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60">
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">id</td>
+                <td class="px-4 py-2.5 text-slate-400">GUID</td>
+                <td class="px-4 py-2.5 text-slate-400">Subtask identifier for this inference run</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">state</td>
+                <td class="px-4 py-2.5 text-slate-400">string</td>
+                <td class="px-4 py-2.5 text-slate-400">
+                  One of: <code class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-emerald-400">success</code>,
+                  <code class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-red-400">failed</code>,
+                  <code class="rounded bg-slate-800 px-1 py-0.5 font-mono text-xs text-amber-400">pending</code>
+                </td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">data</td>
+                <td class="px-4 py-2.5 text-slate-400">object | null</td>
+                <td class="px-4 py-2.5 text-slate-400">Inference results. Present when <code
+                    class="font-mono text-xs">state</code> is <code class="font-mono text-xs">success</code></td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">error</td>
+                <td class="px-4 py-2.5 text-slate-400">string | null</td>
+                <td class="px-4 py-2.5 text-slate-400">Error message. Present when <code
+                    class="font-mono text-xs">state</code> is <code class="font-mono text-xs">failed</code></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Response Example -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Response Example (Success)</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-emerald-500/60"></span>
+            <span class="ml-1 text-xs text-slate-500">200 OK</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300">{
+  <span class="text-brand-200">"id"</span>: <span class="text-emerald-400">"a1b2c3d4-e5f6-7890-abcd-ef1234567890"</span>,
+  <span class="text-brand-200">"state"</span>: <span class="text-emerald-400">"success"</span>,
+  <span class="text-brand-200">"data"</span>: {
+    <span class="text-brand-200">"output_logits"</span>: [[0.12, -0.34, 0.98, 1.45, ...]]
+  },
+  <span class="text-brand-200">"error"</span>: <span class="text-slate-500">null</span>
+}</pre>
+        </div>
+
+        <!-- Error Response -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Response Example (Error)</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+            <span class="ml-1 text-xs text-slate-500">200 OK (with failed state)</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300">{
+  <span class="text-brand-200">"id"</span>: <span class="text-emerald-400">"a1b2c3d4-e5f6-7890-abcd-ef1234567890"</span>,
+  <span class="text-brand-200">"state"</span>: <span class="text-red-400">"failed"</span>,
+  <span class="text-brand-200">"data"</span>: <span class="text-slate-500">null</span>,
+  <span class="text-brand-200">"error"</span>: <span class="text-red-400">"Subtask failed to execute."</span>
+}</pre>
+        </div>
+
+        <!-- HTTP Status Codes -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">HTTP Status Codes</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/50">
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Code</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Meaning</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60">
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-emerald-400">200</td>
+                <td class="px-4 py-2.5 text-slate-400">Inference completed (check <code class="font-mono text-xs">state</code> for result)</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-red-400">400</td>
+                <td class="px-4 py-2.5 text-slate-400">Invalid request body or task not configured for API bindings</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-red-400">401</td>
+                <td class="px-4 py-2.5 text-slate-400">Missing or invalid API key</td>
+              </tr>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-red-400">404</td>
+                <td class="px-4 py-2.5 text-slate-400">Task not found</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Poll Result -->
+    <section id="poll-result" class="border-t border-slate-800/60 px-6 py-14 sm:px-12 lg:px-20">
+      <div class="mx-auto max-w-5xl">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="badge-get rounded-md px-2.5 py-1 text-xs font-bold uppercase tracking-wider">GET</span>
+          <h2 class="text-2xl font-bold text-white">Get Inference Result</h2>
+        </div>
+        <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+          Retrieve the result of a previously submitted inference subtask. Useful if you need to re-check
+          a result or if the original submit request timed out while the subtask was still pending.
+        </p>
+
+        <!-- Endpoint -->
+        <div class="mt-6 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="badge-get rounded px-2 py-0.5 text-[11px] font-bold uppercase">GET</span>
+            <code class="font-mono text-sm text-slate-200">/api/inference/subtasks/{subtaskId}</code>
+          </div>
+        </div>
+
+        <!-- Path Parameters -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Path Parameters</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-800 bg-slate-900/50">
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Parameter</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Type</th>
+                <th class="px-4 py-2.5 text-left font-semibold text-slate-300">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="px-4 py-2.5 font-mono text-xs text-brand-200">subtaskId</td>
+                <td class="px-4 py-2.5 text-slate-400">GUID</td>
+                <td class="px-4 py-2.5 text-slate-400">The subtask <code
+                    class="font-mono text-xs">id</code> returned from the Submit Inference endpoint</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Request Example -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Request Example</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-yellow-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-green-500/60"></span>
+            <span class="ml-2 text-xs text-slate-500">cURL</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300">curl https://infinite-gpu-backend-bvh8a7c3fdgxd7c5.canadacentral-01.azurewebsites.net/api/inference/subtasks/<span class="text-amber-400">{subtaskId}</span> \
+  -H <span class="text-emerald-400">"X-Api-Key: pk-xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"</span></pre>
+        </div>
+
+        <!-- Response -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Response</h3>
+        <p class="mt-2 text-sm text-slate-400">
+          Returns the same response structure as the Submit Inference endpoint.
+        </p>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-emerald-500/60"></span>
+            <span class="ml-1 text-xs text-slate-500">200 OK</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300">{
+  <span class="text-brand-200">"id"</span>: <span class="text-emerald-400">"a1b2c3d4-e5f6-7890-abcd-ef1234567890"</span>,
+  <span class="text-brand-200">"state"</span>: <span class="text-emerald-400">"success"</span>,
+  <span class="text-brand-200">"data"</span>: { ... },
+  <span class="text-brand-200">"error"</span>: <span class="text-slate-500">null</span>
+}</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Code Examples -->
+    <section id="examples" class="border-t border-slate-800/60 px-6 py-14 sm:px-12 lg:px-20">
+      <div class="mx-auto max-w-5xl">
+        <h2 class="text-2xl font-bold text-white">Code Examples</h2>
+        <p class="mt-3 max-w-2xl text-sm leading-relaxed text-slate-400">
+          Complete integration examples in popular languages.
+        </p>
+
+        <!-- Python -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">Python</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-yellow-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-green-500/60"></span>
+            <span class="ml-2 text-xs text-slate-500">inference.py</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300"><span class="text-slate-500">import</span> requests
+
+<span class="text-brand-200">API_KEY</span>  = <span class="text-emerald-400">"pk-xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"</span>
+<span class="text-brand-200">BASE_URL</span> = <span class="text-emerald-400">"https://infinite-gpu-backend-bvh8a7c3fdgxd7c5.canadacentral-01.azurewebsites.net"</span>
+<span class="text-brand-200">TASK_ID</span>  = <span class="text-emerald-400">"your-task-id-here"</span>
+
+<span class="text-slate-500"># Submit inference</span>
+response = requests.post(
+    <span class="text-emerald-400">f"<span class="text-slate-300">{BASE_URL}</span>/api/inference/tasks/<span class="text-slate-300">{TASK_ID}</span>"</span>,
+    headers={
+        <span class="text-emerald-400">"Content-Type"</span>: <span class="text-emerald-400">"application/json"</span>,
+        <span class="text-emerald-400">"X-Api-Key"</span>: API_KEY,
+    },
+    json={
+        <span class="text-emerald-400">"bindings"</span>: [
+            {
+                <span class="text-emerald-400">"tensorName"</span>: <span class="text-emerald-400">"input_ids"</span>,
+                <span class="text-emerald-400">"payloadType"</span>: <span class="text-emerald-400">"Json"</span>,
+                <span class="text-emerald-400">"payload"</span>: <span class="text-emerald-400">"[[101, 2054, 2003, 102]]"</span>,
+                <span class="text-emerald-400">"fileUrl"</span>: None,
+            }
+        ]
+    },
+)
+
+result = response.json()
+<span class="text-slate-500">print</span>(result[<span class="text-emerald-400">"state"</span>])  <span class="text-slate-500"># "success", "failed", or "pending"</span>
+<span class="text-slate-500">print</span>(result[<span class="text-emerald-400">"data"</span>])   <span class="text-slate-500"># inference output</span>
+
+<span class="text-slate-500"># Re-check result later</span>
+subtask_id = result[<span class="text-emerald-400">"id"</span>]
+poll = requests.get(
+    <span class="text-emerald-400">f"<span class="text-slate-300">{BASE_URL}</span>/api/inference/subtasks/<span class="text-slate-300">{subtask_id}</span>"</span>,
+    headers={<span class="text-emerald-400">"X-Api-Key"</span>: API_KEY},
+)
+<span class="text-slate-500">print</span>(poll.json())</pre>
+        </div>
+
+        <!-- JavaScript / Node.js -->
+        <h3 class="mt-8 text-sm font-semibold uppercase tracking-wide text-slate-400">JavaScript / Node.js</h3>
+        <div class="mt-3 overflow-hidden rounded-lg border border-slate-800 bg-slate-900/70">
+          <div class="flex items-center gap-2 border-b border-slate-800 px-4 py-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-red-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-yellow-500/60"></span>
+            <span class="h-2.5 w-2.5 rounded-full bg-green-500/60"></span>
+            <span class="ml-2 text-xs text-slate-500">inference.js</span>
+          </div>
+          <pre
+            class="code-block overflow-x-auto p-4 font-mono text-sm leading-relaxed text-slate-300"><span class="text-slate-500">const</span> <span class="text-brand-200">API_KEY</span>  = <span class="text-emerald-400">"pk-xxxxxxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"</span>;
+<span class="text-slate-500">const</span> <span class="text-brand-200">BASE_URL</span> = <span class="text-emerald-400">"https://infinite-gpu-backend-bvh8a7c3fdgxd7c5.canadacentral-01.azurewebsites.net"</span>;
+<span class="text-slate-500">const</span> <span class="text-brand-200">TASK_ID</span>  = <span class="text-emerald-400">"your-task-id-here"</span>;
+
+<span class="text-slate-500">// Submit inference</span>
+<span class="text-slate-500">const</span> response = <span class="text-slate-500">await</span> fetch(
+  <span class="text-emerald-400">`${BASE_URL}/api/inference/tasks/${TASK_ID}`</span>,
+  {
+    method: <span class="text-emerald-400">"POST"</span>,
+    headers: {
+      <span class="text-emerald-400">"Content-Type"</span>: <span class="text-emerald-400">"application/json"</span>,
+      <span class="text-emerald-400">"X-Api-Key"</span>: API_KEY,
+    },
+    body: JSON.stringify({
+      bindings: [
+        {
+          tensorName: <span class="text-emerald-400">"input_ids"</span>,
+          payloadType: <span class="text-emerald-400">"Json"</span>,
+          payload: <span class="text-emerald-400">"[[101, 2054, 2003, 102]]"</span>,
+          fileUrl: <span class="text-slate-500">null</span>,
+        },
+      ],
+    }),
+  }
+);
+
+<span class="text-slate-500">const</span> result = <span class="text-slate-500">await</span> response.json();
+console.log(result.state); <span class="text-slate-500">// "success", "failed", or "pending"</span>
+console.log(result.data);  <span class="text-slate-500">// inference output</span>
+
+<span class="text-slate-500">// Re-check result later</span>
+<span class="text-slate-500">const</span> poll = <span class="text-slate-500">await</span> fetch(
+  <span class="text-emerald-400">`${BASE_URL}/api/inference/subtasks/${result.id}`</span>,
+  { headers: { <span class="text-emerald-400">"X-Api-Key"</span>: API_KEY } }
+);
+console.log(<span class="text-slate-500">await</span> poll.json());</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800/60 px-6 py-10 sm:px-12 lg:px-20">
+      <div class="mx-auto flex max-w-5xl flex-col items-center gap-4 sm:flex-row sm:justify-between">
+        <div class="flex items-center gap-2">
+          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-white">
+            <img src="/logo-blue.png" alt="InfiniteGPU" class="h-5 w-5" />
+          </div>
+          <span class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">InfiniteGPU</span>
+        </div>
+        <p class="text-xs text-slate-500">&copy; 2026 InfiniteGPU. All rights reserved.</p>
+        <a href="/"
+          class="text-xs font-medium text-slate-400 transition hover:text-white">
+          &larr; Back to home
+        </a>
+      </div>
+    </footer>
+  </div>
+</body>
+
+</html>

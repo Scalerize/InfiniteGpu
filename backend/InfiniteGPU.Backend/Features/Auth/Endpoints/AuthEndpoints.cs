@@ -1,8 +1,10 @@
 using System.Security.Claims;
 using MediatR;
+using InfiniteGPU.Backend.Data;
 using InfiniteGPU.Backend.Features.Auth.Commands;
 using InfiniteGPU.Backend.Features.Auth.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace InfiniteGPU.Backend.Features.Auth.Endpoints;
 
@@ -97,6 +99,32 @@ public static class AuthEndpoints
                 {
                     return Results.BadRequest(new { Error = ex.Message });
                 }
+            })
+            .RequireAuthorization();
+
+        group.MapGet("/api-key", async (
+                ClaimsPrincipal principal,
+                AppDbContext context,
+                CancellationToken cancellationToken) =>
+            {
+                var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+                if (string.IsNullOrWhiteSpace(userId))
+                {
+                    return Results.Json(new { Error = "Unable to resolve current user." }, statusCode: 401);
+                }
+
+                var apiKey = await context.ApiKeys
+                    .Where(k => k.UserId == userId && k.IsActive)
+                    .OrderByDescending(k => k.CreatedAtUtc)
+                    .Select(k => new { k.Key })
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (apiKey is null)
+                {
+                    return Results.NotFound(new { Error = "No active API key found." });
+                }
+
+                return Results.Ok(new { ApiKey = apiKey.Key });
             })
             .RequireAuthorization();
     }
