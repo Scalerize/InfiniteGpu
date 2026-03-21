@@ -1,6 +1,5 @@
-import { type JSX, useMemo, useState } from "react";
+import { type JSX, useCallback, useMemo, useState } from "react";
 import {
-  ArrowUpRight,
   CheckCircle2,
   Clock,
   FileDown,
@@ -8,6 +7,7 @@ import {
   Loader2,
   Plus,
   Receipt,
+  Square,
   UserCheck,
   XCircle,
 } from "lucide-react";
@@ -15,6 +15,9 @@ import { NewTaskRequestDialog } from "./NewTaskRequestDialog";
 import { SubtasksDialog } from "./SubtasksDialog";
 import { DataTable } from "../../../shared/components/DataTable";
 import { useMyTasksQuery } from "../queries/useMyTasksQuery";
+import { cancelTask } from "../api";
+import { appQueryClient } from "../../../shared/providers/queryClient";
+import { invalidateMyTasksQueryKey } from "../queries/useMyTasksQuery";
 import type { RequestorTaskDto } from "../types";
 import { RequestorTaskStatus, RequestorTaskType } from "../types";
 import { getRelativeTime } from "../../../shared/utils/dateTime";
@@ -82,7 +85,7 @@ interface RequestRecap {
   duration: string;
   subtaskCount: number;
   cost: number;
-  logsUrl: string | null;
+  fillBindingsViaApi: boolean;
 }
 
 const TASK_TYPE_LABEL: Record<RequestorTaskType, string> = {
@@ -147,13 +150,11 @@ const resolveArtifactName = (url: string) => {
 };
 
 const formatTaskLabel = (task: RequestorTaskDto) => {
-  const baseLabel = TASK_TYPE_LABEL[task.type] ?? "Workload";
-  const binding = task.inference?.bindings?.[0]?.tensorName;
-
-  if (binding && binding.trim().length > 0) {
-    return `${baseLabel} • ${binding}`;
+  if (task.name && task.name.trim().length > 0) {
+    return task.name.trim();
   }
 
+  const baseLabel = TASK_TYPE_LABEL[task.type] ?? "Workload";
   return `${baseLabel} workload`;
 };
 
@@ -165,6 +166,15 @@ export const RequestHistoryPanel = () => {
     taskLabel: string;
   }>({ open: false, taskId: "", taskLabel: "" });
   const { data, isLoading, isError } = useMyTasksQuery();
+
+  const handleCancelTask = useCallback(async (taskId: string) => {
+    try {
+      await cancelTask(taskId);
+      appQueryClient.invalidateQueries({ queryKey: invalidateMyTasksQueryKey });
+    } catch {
+      // Silently fail – the UI will reflect current state on next poll
+    }
+  }, []);
 
   const requestRecaps = useMemo<RequestRecap[]>(() => {
     if (!data) {
@@ -190,7 +200,7 @@ export const RequestHistoryPanel = () => {
           duration: formatDurationFromSeconds(task.durationSeconds ?? 0),
           subtaskCount: task.subtasksCount,
           cost: Number(task.estimatedCost ?? 0),
-          logsUrl: null,
+          fillBindingsViaApi: task.fillBindingsViaApi ?? false,
         };
       });
   }, [data]);
@@ -251,8 +261,8 @@ export const RequestHistoryPanel = () => {
             <span className="font-semibold text-slate-900 dark:text-slate-100">
               {request.label}
             </span>
-            <span className="text-xs text-slate-400 dark:text-slate-500">
-              Request ID: {request.id}
+            <span className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate" title={request.id}>
+              {request.id}
             </span>
           </div>
         ),
@@ -356,25 +366,36 @@ export const RequestHistoryPanel = () => {
         render: (request: RequestRecap) => formatCurrency(request.cost),
       },
       {
-        key: "logs",
-        header: "Logs",
+        key: "actions",
+        header: "Actions",
         headerClassName: "whitespace-nowrap px-6 py-3 text-right",
         cellClassName: "px-6 py-4 align-top text-right",
-        render: (request: RequestRecap) =>
-          request.logsUrl ? (
-            <a
-              href={request.logsUrl}
-              className="text-nowrap inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-indigo-700 dark:hover:text-indigo-400"
-            >
-              View logs
-              <ArrowUpRight className="h-3.5 w-3.5" />
-            </a>
-          ) : (
-            <span className="text-xs text-slate-400 dark:text-slate-500">Not available</span>
-          ),
+        render: (request: RequestRecap) => {
+          const isActive =
+            request.status === RequestorTaskStatus.Pending ||
+            request.status === RequestorTaskStatus.Assigned ||
+            request.status === RequestorTaskStatus.InProgress;
+
+          if (request.fillBindingsViaApi && isActive) {
+            return (
+              <button
+                type="button"
+                onClick={() => handleCancelTask(request.id)}
+                className="text-nowrap inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-sm transition hover:border-rose-300 hover:bg-rose-50 dark:border-rose-800 dark:bg-slate-800 dark:text-rose-400 dark:hover:border-rose-700 dark:hover:bg-rose-950/30"
+              >
+                <Square className="h-3.5 w-3.5" />
+                Stop task
+              </button>
+            );
+          }
+
+          return (
+            <span className="text-xs text-slate-400 dark:text-slate-500">—</span>
+          );
+        },
       },
     ],
-    [setSubtasksDialogState]
+    [setSubtasksDialogState, handleCancelTask]
   );
 
   return (

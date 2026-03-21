@@ -4,6 +4,8 @@ public class TaskDto
 {
     public Guid Id { get; set; }
 
+    public string? Name { get; set; }
+
     public TaskType Type { get; set; }
 
     public string ModelUrl { get; set; } = string.Empty;

@@ -7,6 +7,7 @@ namespace InfiniteGPU.Backend.Features.Tasks.Commands;
 public record CreateTaskCommand(
     string UserId,
     Guid TaskId,
+    string? Name,
     string ModelUrl,
     string? OptimizerModelUrl,
     string? CheckpointUrl,

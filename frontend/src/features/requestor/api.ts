@@ -44,6 +44,7 @@ export type InferencePayloadType = "Json" | "Text" | "Binary";
 
 export interface CreateTaskRequestBody {
   taskId: string;
+  name?: string;
   type: TaskType;
   modelUrl: string;
   optimizerModelUrl?: string;
@@ -100,3 +101,8 @@ export const getTaskSubtasks = (taskId: string) => {
     `/api/tasks/${taskId}/subtasks`
   );
 };
+
+export const cancelTask = (taskId: string) =>
+  apiRequest<{ cancelled: boolean }>(`/api/tasks/${taskId}/cancel`, {
+    method: "POST",
+  });

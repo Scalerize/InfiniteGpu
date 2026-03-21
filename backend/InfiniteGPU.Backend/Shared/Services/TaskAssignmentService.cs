@@ -598,6 +598,74 @@ public sealed class TaskAssignmentService
         return new FailureResult(subtask, provider!, canReassign, task.Status == TaskStatusEnum.Failed);
     }
 
+    public async Task<bool> CancelTaskAsync(
+        Guid taskId,
+        string requestorUserId,
+        CancellationToken cancellationToken)
+    {
+        var task = await _context.Tasks
+            .Include(t => t.Subtasks)
+            .FirstOrDefaultAsync(t => t.Id == taskId && t.UserId == requestorUserId, cancellationToken);
+
+        if (task is null)
+        {
+            _logger.LogWarning("Task {TaskId} not found for cancellation by user {UserId}", taskId, requestorUserId);
+            return false;
+        }
+
+        if (task.Status is TaskStatusEnum.Completed or TaskStatusEnum.Failed)
+        {
+            _logger.LogWarning("Task {TaskId} is already in terminal state {Status}, cannot cancel", taskId, task.Status);
+            return false;
+        }
+
+        var now = DateTime.UtcNow;
+
+        // Fail all active subtasks
+        var activeSubtasks = task.Subtasks
+            .Where(s => s.Status is SubtaskStatusEnum.Pending or SubtaskStatusEnum.Assigned or SubtaskStatusEnum.Executing)
+            .ToList();
+
+        foreach (var subtask in activeSubtasks)
+        {
+            subtask.Status = SubtaskStatusEnum.Failed;
+            subtask.FailureReason = "Cancelled by requestor";
+            subtask.FailedAtUtc = now;
+            subtask.LastCommandAtUtc = now;
+            subtask.NextHeartbeatDueAtUtc = null;
+            subtask.RequiresReassignment = false;
+
+            UpdateExecutionState(subtask, new ExecutionStateModel
+            {
+                Phase = "failed",
+                Message = "Cancelled by requestor",
+                ProviderUserId = subtask.AssignedProviderId,
+                ExtendedMetadata = new Dictionary<string, object?>
+                {
+                    ["cancelledAtUtc"] = now,
+                    ["cancelledBy"] = requestorUserId
+                }
+            });
+
+            await AppendTimelineEventAsync(subtask, "cancellation", "Task cancelled by requestor", new
+            {
+                cancelledAtUtc = now,
+                cancelledBy = requestorUserId
+            }, cancellationToken);
+        }
+
+        task.Status = TaskStatusEnum.Failed;
+        task.UpdatedAt = now;
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "Task {TaskId} cancelled by user {UserId}. {SubtaskCount} subtask(s) terminated.",
+            taskId, requestorUserId, activeSubtasks.Count);
+
+        return true;
+    }
+
     private async Task<bool> CanReassignSubtaskAsync(Subtask subtask, CancellationToken cancellationToken)
     {
         // Check if there are other active providers that could take this subtask
@@ -1018,6 +1086,14 @@ public sealed class TaskAssignmentService
         if (string.IsNullOrWhiteSpace(task.UserId))
         {
             throw new InvalidOperationException("Task must have a requestor user");
+        }
+
+        if (!subtask.CostUsd.HasValue || subtask.CostUsd.Value == 0m)
+        {
+            _logger.LogWarning(
+                "Subtask {SubtaskId} has no cost data – skipping earning/withdrawal creation",
+                subtask.Id);
+            return;
         }
 
         var subtaskCost = subtask.CostUsd.Value;

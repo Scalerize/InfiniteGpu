@@ -800,6 +800,7 @@ export const NewTaskRequestDialog = ({
 
       const requestBody: CreateTaskRequestBody = {
         taskId,
+        name: taskName.trim() || undefined,
         type: resolvedTaskType,
         modelUrl: modelUploadUrl.blobUri,
         optimizerModelUrl: optimizerUploadUrl?.blobUri,

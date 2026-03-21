@@ -69,6 +69,7 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
         var task = new TaskEntity
         {
             Id = request.TaskId,
+            Name = request.Name,
             UserId = request.UserId,
             Type = request.Type,
             OnnxModelBlobUri = request.ModelUrl,
@@ -197,6 +198,7 @@ public class CreateTaskCommandHandler : IRequestHandler<CreateTaskCommand, TaskD
         return new TaskDto
         {
             Id = task.Id,
+            Name = task.Name,
             Type = task.Type,
             ModelUrl = task.OnnxModelBlobUri,
             OptimizerModelUrl = task.OptimizerModelBlobUri,

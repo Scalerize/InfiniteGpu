@@ -42,6 +42,11 @@ public static class TaskEndpoints
         group.MapGet("/requestor-intake", GetRequestorIntakeAsync)
             .WithName("GetRequestorIntake")
             .WithOpenApi();
+
+        group.MapPost("/{id:guid}/cancel", CancelTaskAsync)
+            .WithName("CancelTask")
+            .WithOpenApi()
+            .RequireAuthorization();
     }
 
     private static async Task<IResult> CreateTaskAsync(
@@ -60,6 +65,7 @@ public static class TaskEndpoints
         var command = new CreateTaskCommand(
             userId,
             request.TaskId,
+            request.Name,
             request.ModelUrl,
             request.OptimizerModelUrl,
             request.CheckpointUrl,
@@ -213,6 +219,29 @@ public static class TaskEndpoints
         return Results.Ok(intake);
     }
 
+    private static async Task<IResult> CancelTaskAsync(
+        Guid id,
+        ClaimsPrincipal principal,
+        IMediator mediator,
+        CancellationToken cancellationToken)
+    {
+        var userId = principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrWhiteSpace(userId))
+        {
+            return Results.Unauthorized();
+        }
+
+        var command = new Commands.CancelTaskCommand(id, userId);
+        var result = await mediator.Send(command, cancellationToken);
+
+        if (!result)
+        {
+            return Results.NotFound(new { error = "Task not found or cannot be cancelled." });
+        }
+
+        return Results.Ok(new { cancelled = true });
+    }
+
     private readonly record struct TaskUploadUrlResponse(
         string BlobUri,
         string UploadUri,
@@ -227,6 +256,7 @@ public static class TaskEndpoints
 
     private readonly record struct CreateTaskRequest(
         Guid TaskId,
+        string? Name,
         TaskType Type,
         string ModelUrl,
         string? OptimizerModelUrl,

@@ -11,6 +11,9 @@ public class Task
     [Key]
     public Guid Id { get; set; } = Guid.NewGuid();
 
+    [MaxLength(256)]
+    public string? Name { get; set; }
+
     [Required]
     public string UserId { get; set; } = string.Empty;
 

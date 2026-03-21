@@ -46,6 +46,7 @@ public class GetTaskByIdQueryHandler : IRequestHandler<GetTaskByIdQuery, TaskDto
         return new TaskDto
         {
             Id = task.Id,
+            Name = task.Name,
             Type = task.Type,
             ModelUrl = task.OnnxModelBlobUri,
             Status = task.Status,

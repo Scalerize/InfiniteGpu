@@ -45,6 +45,7 @@ public class GetTasksQueryHandler : IRequestHandler<GetTasksQuery, List<TaskDto>
         var dtos = tasks.Select(t => new TaskDto
         {
             Id = t.Id,
+            Name = t.Name,
             Type = t.Type,
             ModelUrl = t.OnnxModelBlobUri,
             Status = t.Status,

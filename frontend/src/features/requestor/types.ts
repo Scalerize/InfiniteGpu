@@ -71,8 +71,10 @@ export interface RequestorTaskTrainingDto {
 
 export interface RequestorTaskDto {
   id: string;
+  name?: string | null;
   type: RequestorTaskType;
   modelUrl: string;
+  fillBindingsViaApi: boolean;
   train?: {
     epochs: number;
     batchSize: number;

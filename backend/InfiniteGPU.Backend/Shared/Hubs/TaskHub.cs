@@ -1025,6 +1025,7 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHub
         return new TaskDto
         {
             Id = task.Id,
+            Name = task.Name,
             Type = task.Type,
             Status = task.Status,
             EstimatedCost = task.EstimatedCost,
