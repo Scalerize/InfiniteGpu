@@ -1,7 +1,9 @@
 import { type JSX, useCallback, useMemo, useState } from "react";
 import {
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   FileDown,
   FolderTree,
   Loader2,
@@ -158,6 +160,37 @@ const formatTaskLabel = (task: RequestorTaskDto) => {
   return `${baseLabel} workload`;
 };
 
+const CopyableId = ({ id }: { id: string }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(id).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+    },
+    [id]
+  );
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 text-xs text-slate-400 dark:text-slate-500 font-mono truncate max-w-full group/copy hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
+      title="Click to copy task ID"
+    >
+      <span className="truncate">{id}</span>
+      {copied ? (
+        <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+      ) : (
+        <Copy className="h-3 w-3 shrink-0 opacity-0 group-hover/copy:opacity-100 transition-opacity" />
+      )}
+    </button>
+  );
+};
+
 export const RequestHistoryPanel = () => {
   const [newTaskDialogOpen, setNewTaskDialogOpen] = useState(false);
   const [subtasksDialogState, setSubtasksDialogState] = useState<{
@@ -261,9 +294,7 @@ export const RequestHistoryPanel = () => {
             <span className="font-semibold text-slate-900 dark:text-slate-100">
               {request.label}
             </span>
-            <span className="text-xs text-slate-400 dark:text-slate-500 font-mono truncate" title={request.id}>
-              {request.id}
-            </span>
+            <CopyableId id={request.id} />
           </div>
         ),
       },
