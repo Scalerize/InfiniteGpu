@@ -12,9 +12,9 @@
 		<ProtobufGenerateBeforeCompile>true</ProtobufGenerateBeforeCompile>
 		<UseWinUI>true</UseWinUI>
 		<Nullable>enable</Nullable>
-		<Version>1.0.14.0</Version>
-		<AssemblyVersion>1.0.14.0</AssemblyVersion>
-		<FileVersion>1.0.14.0</FileVersion>
+		<Version>1.0.15.0</Version>
+		<AssemblyVersion>1.0.15.0</AssemblyVersion>
+		<FileVersion>1.0.15.0</FileVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
