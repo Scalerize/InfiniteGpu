@@ -42,6 +42,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
         private readonly OnnxPartitionerService _onnxPartitionerService;
         private readonly HardwareMetricsService _hardwareMetricsService;
         private readonly ModelCacheService _modelCacheService;
+        private readonly TelemetryService _telemetryService;
         private readonly HttpClient _httpClient;
         private readonly bool _ownsHttpClient;
         private readonly InputParsingService _inputParsingService;
@@ -66,7 +67,8 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             OnnxParsingService onnxParsingService,
             OnnxPartitionerService onnxPartitionerService,
             HardwareMetricsService hardwareMetricsService,
-            ModelCacheService modelCacheService)
+            ModelCacheService modelCacheService,
+            TelemetryService telemetryService)
         {
             _deviceIdentifierService = deviceIdentifierService ??
                                        throw new ArgumentNullException(nameof(deviceIdentifierService));
@@ -81,6 +83,7 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             _hardwareMetricsService =
                 hardwareMetricsService ?? throw new ArgumentNullException(nameof(hardwareMetricsService));
             _modelCacheService = modelCacheService ?? throw new ArgumentNullException(nameof(modelCacheService));
+            _telemetryService = telemetryService ?? throw new ArgumentNullException(nameof(telemetryService));
             _modelCacheService.Initialize();
         }
 
@@ -294,6 +297,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 catch (Exception ex)
                 {
                     Debug.WriteLine($"[BackgroundWorkService] Hub connection error: {ex}");
+                    _telemetryService.TrackException(ex, new Dictionary<string, string>
+                    {
+                        ["context"] = "RunConnectionLoopAsync",
+                        ["detail"] = "Hub connection error"
+                    });
                     await Task.Delay(ConnectionRetryDelay, cancellationToken).ConfigureAwait(false);
                 }
                 finally
@@ -313,6 +321,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         catch (Exception stopEx)
                         {
                             Debug.WriteLine($"[BackgroundWorkService] Error stopping hub connection: {stopEx}");
+                            _telemetryService.TrackException(stopEx, new Dictionary<string, string>
+                            {
+                                ["context"] = "RunConnectionLoopAsync.Finally",
+                                ["detail"] = "Error stopping hub connection"
+                            });
                         }
 
                         try
@@ -322,6 +335,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         catch (Exception disposeEx)
                         {
                             Debug.WriteLine($"[BackgroundWorkService] Error disposing hub connection: {disposeEx}");
+                            _telemetryService.TrackException(disposeEx, new Dictionary<string, string>
+                            {
+                                ["context"] = "RunConnectionLoopAsync.Finally",
+                                ["detail"] = "Error disposing hub connection"
+                            });
                         }
 
                         lock (_syncRoot)
@@ -365,6 +383,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                         catch (Exception ex)
                         {
                             Debug.WriteLine($"[BackgroundWorkService] Failed processing execution request: {ex}");
+                            _telemetryService.TrackException(ex, new Dictionary<string, string>
+                            {
+                                ["context"] = "RunWorkerLoopAsync",
+                                ["detail"] = "Failed processing execution request"
+                            });
                         }
                     }
                 }
@@ -503,6 +526,12 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"[BackgroundWorkService] Execution failed for subtask {subtask.Id}: {ex}");
+                _telemetryService.TrackException(ex, new Dictionary<string, string>
+                {
+                    ["context"] = "ProcessExecutionRequestAsync",
+                    ["detail"] = "Execution failed",
+                    ["subtaskId"] = subtask.Id.ToString()
+                });
 
                 var failedResult = new FailedResultDto
                 {
@@ -518,6 +547,12 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
                 catch (Exception submitEx)
                 {
                     Debug.WriteLine($"[BackgroundWorkService] Failed to submit error payload: {submitEx}");
+                    _telemetryService.TrackException(submitEx, new Dictionary<string, string>
+                    {
+                        ["context"] = "ProcessExecutionRequestAsync",
+                        ["detail"] = "Failed to submit error payload",
+                        ["subtaskId"] = subtask.Id.ToString()
+                    });
                 }
             }
         }
@@ -563,6 +598,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"[BackgroundWorkService] Forced reconnect failed: {ex}");
+                _telemetryService.TrackException(ex, new Dictionary<string, string>
+                {
+                    ["context"] = "ForceReconnectAsync",
+                    ["detail"] = "Forced reconnect failed"
+                });
             }
         }
 
@@ -606,6 +646,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"[BackgroundWorkService] Error stopping hub connection during disposal: {ex}");
+                _telemetryService.TrackException(ex, new Dictionary<string, string>
+                {
+                    ["context"] = "DisposeHubConnectionAsync",
+                    ["detail"] = "Error stopping hub connection during disposal"
+                });
             }
 
             try
@@ -615,6 +660,11 @@ namespace Scalerize.InfiniteGpu.Desktop.Services
             catch (Exception ex)
             {
                 Debug.WriteLine($"[BackgroundWorkService] Error disposing hub connection: {ex}");
+                _telemetryService.TrackException(ex, new Dictionary<string, string>
+                {
+                    ["context"] = "DisposeHubConnectionAsync",
+                    ["detail"] = "Error disposing hub connection"
+                });
             }
         }
 

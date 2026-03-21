@@ -93,3 +93,5 @@ backend/InfiniteGPU.Backend/Properties/ServiceDependencies
 desktop/Scalerize.InfiniteGpu.Desktop/Scalerize.InfiniteGpu.Desktop (Package)/Scalerize.InfiniteGpu.Desktop.Package.assets.cache
 desktop/Scalerize.InfiniteGpu.Desktop/Scalerize.InfiniteGpu.Desktop (Package)/Scalerize.InfiniteGpu.Desktop.Package_TemporaryKey.pfx
 desktop/Scalerize.InfiniteGpu.Desktop/Scalerize.InfiniteGpu.Desktop (Package)/Package.StoreAssociation.xml
+
+emails/

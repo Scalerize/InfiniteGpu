@@ -153,6 +153,7 @@ namespace Scalerize.InfiniteGpu.Desktop
         {
             var services = new ServiceCollection();
 
+            services.AddSingleton<TelemetryService>();
             services.AddSingleton(_ => CreateHttpClient());
             services.AddSingleton<ModelCacheService>();
             services.AddSingleton<OnnxRuntimeService>();
