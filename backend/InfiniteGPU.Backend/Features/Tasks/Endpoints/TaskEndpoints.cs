@@ -78,8 +78,19 @@ public static class TaskEndpoints
             return Results.ValidationProblem(errors.ToDictionary());
         }
 
-        var task = await mediator.Send(command, cancellationToken);
-        return Results.Created($"/api/tasks/{task.Id}", task);
+        try
+        {
+            var task = await mediator.Send(command, cancellationToken);
+            return Results.Created($"/api/tasks/{task.Id}", task);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Results.Unauthorized();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Json(new { error = ex.Message }, statusCode: 402);
+        }
     }
 
     private static async Task<IResult> GenerateTaskUploadUrlAsync(
