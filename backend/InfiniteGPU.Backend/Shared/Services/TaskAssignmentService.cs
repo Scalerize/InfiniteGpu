@@ -1023,9 +1023,9 @@ public sealed class TaskAssignmentService
             }
 
             if (metricsElement.TryGetProperty("memoryGBytes", out var memoryElement) &&
-                memoryElement.TryGetInt64(out var memoryValue))
+                memoryElement.TryGetDouble(out var memoryValue))
             {
-                memoryGBytes = memoryValue;
+                memoryGBytes = (long)memoryValue;
             }
 
             if (durationSeconds.HasValue && !string.IsNullOrWhiteSpace(device))

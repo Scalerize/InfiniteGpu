@@ -93,9 +93,23 @@ export async function apiRequest<TResponse, TBody = unknown>(
     throw new Error(errorMessage);
   }
 
-  if (response.status === 204) {
+  if (response.status === 204 || response.status === 202) {
     return undefined as TResponse;
   }
 
-  return response.json() as Promise<TResponse>;
+  const contentLength = response.headers.get('content-length');
+  const contentType = response.headers.get('content-type');
+
+  // Handle responses with no body or non-JSON content type
+  if (contentLength === '0' || (contentType && !contentType.includes('application/json'))) {
+    return undefined as TResponse;
+  }
+
+  // Try to parse JSON, but handle empty bodies gracefully
+  const text = await response.text();
+  if (!text || text.trim().length === 0) {
+    return undefined as TResponse;
+  }
+
+  return JSON.parse(text) as TResponse;
 }

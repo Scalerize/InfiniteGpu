@@ -9,6 +9,7 @@ import { updateProfile } from "../../features/auth/api";
 import { UserProfileUpdateDialog } from "../../features/requestor/components/UserProfileUpdateDialog";
 import { AppNavigation } from "../components/AppNavigation";
 import { UpdatePrompt } from "../components/UpdatePrompt";
+import { useSignalRRefresh } from "../hooks/useSignalRRefresh";
 import scalerize from "../../assets/logo-blue.png";
 
 const capitalize = (value: string) =>
@@ -132,6 +133,9 @@ export const ProtectedAppShell = () => {
   const setAuth = useAuthStore((state) => state.setAuth);
   const token = useAuthStore((state) => state.token);
   const clearAuth = useAuthStore((state) => state.clearAuth);
+
+  // SignalR: invalidate queries when tasks/subtasks change state on the server
+  useSignalRRefresh();
 
   const derivedNameParts = useMemo(() => deriveNameParts(user), [user]);
 

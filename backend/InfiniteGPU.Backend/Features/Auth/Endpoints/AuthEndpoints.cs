@@ -32,7 +32,7 @@ public static class AuthEndpoints
             try
             {
                 await mediator.Send(command);
-                return Results.Accepted();
+                return Results.Ok(new { Message = "If an account exists with that email, a password reset link has been sent." });
             }
             catch (Exception ex)
             {
@@ -45,7 +45,7 @@ public static class AuthEndpoints
             try
             {
                 await mediator.Send(command);
-                return Results.Ok();
+                return Results.Ok(new { Message = "Password has been reset successfully." });
             }
             catch (Exception ex)
             {

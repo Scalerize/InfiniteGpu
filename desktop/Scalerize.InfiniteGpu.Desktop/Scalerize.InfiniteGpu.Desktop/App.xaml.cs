@@ -1,11 +1,14 @@
 using System;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Hardware.Info;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
+using Microsoft.Windows.AppLifecycle;
 using Scalerize.InfiniteGpu.Desktop.Constants;
 using Scalerize.InfiniteGpu.Desktop.Services;
 
@@ -32,11 +35,10 @@ namespace Scalerize.InfiniteGpu.Desktop
         private const int SW_RESTORE = 9;
         private const int SW_SHOW = 5;
         private const string AppWindowTitle = "InfiniteGpu";
+        private const string SingleInstanceKey = "Scalerize.InfiniteGpu.Desktop.Main";
 
         private Window? _window;
         private IServiceProvider? _serviceProvider;
-        private static Mutex? _singleInstanceMutex;
-        private const string AppMutexName = "Scalerize.InfiniteGpu.Desktop.SingleInstance";
 
         public static IServiceProvider Services =>
             (Current as App)?._serviceProvider ?? throw new InvalidOperationException("The service provider has not been initialized.");
@@ -49,16 +51,50 @@ namespace Scalerize.InfiniteGpu.Desktop
         {
             InitializeComponent();
 
-            // Check for single instance
-            _singleInstanceMutex = new Mutex(true, AppMutexName, out bool createdNew);
+            // Use AppInstance API for single instance with activation redirect.
+            // This ensures protocol activation URIs are forwarded to the running instance.
+            var mainInstance = AppInstance.FindOrRegisterForKey(SingleInstanceKey);
 
-            if (!createdNew)
+            if (!mainInstance.IsCurrent)
             {
-                // Another instance is already running - activate existing window
-                _singleInstanceMutex.Dispose();
-                _singleInstanceMutex = null;
+                // Another instance is already running — redirect our activation to it
+                var activatedArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
+                mainInstance.RedirectActivationToAsync(activatedArgs).AsTask().GetAwaiter().GetResult();
+
+                // Also bring the existing window to the foreground as a fallback
                 ActivateExistingWindow();
-                Environment.Exit(0);
+                Process.GetCurrentProcess().Kill();
+                return;
+            }
+
+            // Main instance: listen for activation redirects from secondary instances
+            mainInstance.Activated += OnInstanceActivated;
+        }
+
+        /// <summary>
+        /// Handles activation events redirected from secondary instances (e.g., protocol deep links
+        /// while the app is already running).
+        /// </summary>
+        private void OnInstanceActivated(object? sender, AppActivationArguments args)
+        {
+            try
+            {
+                if (args.Kind == ExtendedActivationKind.Protocol)
+                {
+                    var protocolArgs = (Windows.ApplicationModel.Activation.ProtocolActivatedEventArgs)args.Data;
+                    if (protocolArgs.Uri.Scheme == "infinitegpu" && _window is MainWindow mainWindow)
+                    {
+                        // Activated event fires on a background thread — dispatch to UI thread
+                        mainWindow.DispatcherQueue.TryEnqueue(() =>
+                        {
+                            mainWindow.NavigateTo(protocolArgs.Uri);
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Failed to handle redirected activation: {ex}");
             }
         }
 
@@ -75,8 +111,8 @@ namespace Scalerize.InfiniteGpu.Desktop
 
             try
             {
-                var activatedEventArgs = Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs();
-                if (activatedEventArgs.Kind == Microsoft.Windows.AppLifecycle.ExtendedActivationKind.Protocol)
+                var activatedEventArgs = AppInstance.GetCurrent().GetActivatedEventArgs();
+                if (activatedEventArgs.Kind == ExtendedActivationKind.Protocol)
                 {
                     var protocolArgs = (Windows.ApplicationModel.Activation.ProtocolActivatedEventArgs)activatedEventArgs.Data;
                     if (protocolArgs.Uri.Scheme == "infinitegpu")
@@ -142,11 +178,6 @@ namespace Scalerize.InfiniteGpu.Desktop
                 await disposable.DisposeAsync();
                 _serviceProvider = null;
             }
-
-            // Release the mutex when the window closes
-            _singleInstanceMutex?.ReleaseMutex();
-            _singleInstanceMutex?.Dispose();
-            _singleInstanceMutex = null;
         }
 
         private static IServiceProvider ConfigureServices()

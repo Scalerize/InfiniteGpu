@@ -101,6 +101,7 @@ namespace Scalerize.InfiniteGpu.Desktop
         private bool _runtimeReady;
         private bool _bridgeReady;
         private bool _bridgeHandlersRegistered;
+        private Uri? _pendingDeepLinkUri;
         private AppWindow? _appWindow;
         private bool _allowClose;
         private TaskCompletionSource<bool>? _shutdownCompletionSource;
@@ -298,9 +299,13 @@ namespace Scalerize.InfiniteGpu.Desktop
 
         private void NavigateToFrontend()
         {
-            if (AppWebView.Source != Constants.Constants.FrontendUri)
+            // If a deep link URI was queued before the WebView was ready, use it instead
+            var targetUri = _pendingDeepLinkUri ?? Constants.Constants.FrontendUri;
+            _pendingDeepLinkUri = null;
+
+            if (AppWebView.Source != targetUri)
             {
-                AppWebView.Source = Constants.Constants.FrontendUri;
+                AppWebView.Source = targetUri;
             }
             else
             {
@@ -703,16 +708,26 @@ namespace Scalerize.InfiniteGpu.Desktop
             if (uri.Host == "reset-password")
             {
                 var query = uri.Query;
-                var frontendUri = new UriBuilder(Constants.Constants.FrontendUri);
-                frontendUri.Path = "reset-password";
-                frontendUri.Query = query;
+                var frontendUriBuilder = new UriBuilder(Constants.Constants.FrontendUri);
+                frontendUriBuilder.Path = "reset-password";
+                frontendUriBuilder.Query = query;
+                var targetUri = frontendUriBuilder.Uri;
 
-                DispatcherQueue.TryEnqueue(() =>
+                // If the WebView bridge is ready, navigate immediately
+                if (_bridgeReady && AppWebView?.CoreWebView2 != null)
                 {
-                    AppWebView.Source = frontendUri.Uri;
-                    _appWindow?.Show();
-                    Activate();
-                });
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        AppWebView.Source = targetUri;
+                        _appWindow?.Show();
+                        Activate();
+                    });
+                }
+                else
+                {
+                    // Store for later — NavigateToFrontend() will pick it up
+                    _pendingDeepLinkUri = targetUri;
+                }
             }
         }
 

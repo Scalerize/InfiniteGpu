@@ -19,6 +19,8 @@ namespace InfiniteGPU.Backend.Shared.Hubs;
 [Authorize]
 public class TaskHub : Hub<ITaskHubClient>, ITaskHub
 {
+    private static readonly JsonSerializerOptions WebJsonOptions = new(JsonSerializerDefaults.Web);
+
     private readonly AppDbContext _context;
     private readonly TaskAssignmentService _assignmentService;
     private readonly ILogger<TaskHub> _logger;
@@ -291,9 +293,7 @@ public class TaskHub : Hub<ITaskHubClient>, ITaskHub
             providerUserId,
             subtaskId);
 
-        string resultDataJson = result.Outputs is not null 
-            ? JsonSerializer.Serialize(result.Outputs)
-            : "{}";
+        string resultDataJson = JsonSerializer.Serialize(result, WebJsonOptions);
 
         var completion = await _assignmentService.CompleteSubtaskAsync(
             subtaskId,
