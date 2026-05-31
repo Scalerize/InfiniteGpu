@@ -20,31 +20,6 @@ const deriveNameParts = (user: AuthUser | null) => {
     return { firstName: user.firstName, lastName: user.lastName };
   }
 
-  if (!user?.email) {
-    return { firstName: "", lastName: "" };
-  }
-
-  const emailName = user.email.split("@")[0] ?? "";
-  const segments = emailName.split(/[.\-_]/).filter(Boolean);
-
-  if (segments.length >= 2) {
-    return {
-      firstName: capitalize(segments[0]),
-      lastName: capitalize(segments[1]),
-    };
-  }
-
-  if (segments.length === 1) {
-    return { firstName: capitalize(segments[0]), lastName: "" };
-  }
-
-  if (emailName.length >= 2) {
-    return {
-      firstName: capitalize(emailName.slice(0, emailName.length - 1)),
-      lastName: capitalize(emailName.slice(-1)),
-    };
-  }
-
   return { firstName: "", lastName: "" };
 };
 
@@ -78,14 +53,10 @@ const resolveUserPresentation = (user: AuthUser | null) => {
     };
   }
 
-  const fallbackId = user.id?.slice(0, 4)?.toUpperCase() ?? "IG";
-  
-  let label = user.email ?? `User ${fallbackId}`;
+  let label = user.userName!;
 
   if (user.firstName && user.lastName) {
     label = `${user.firstName} ${user.lastName}`;
-  } else if (user.userName) {
-    label = user.userName;
   }
 
   const badge =
@@ -99,22 +70,8 @@ const resolveUserPresentation = (user: AuthUser | null) => {
     if (user.firstName && user.lastName) {
       return (user.firstName[0] + user.lastName[0]).toUpperCase();
     }
-
-    if (user.email) {
-      const emailName = user.email.split("@")[0];
-      const parts = emailName.split(/[.\-_]/).filter(Boolean);
-      if (parts.length >= 2) {
-        return (parts[0][0] + parts[1][0]).toUpperCase();
-      }
-      if (emailName.length >= 2) {
-        return emailName.slice(0, 2).toUpperCase();
-      }
-      if (emailName.length === 1) {
-        return `${emailName[0].toUpperCase()}${emailName[0].toUpperCase()}`;
-      }
-    }
-
-    return fallbackId.slice(0, 2).padEnd(2, "X");
+  
+    return `${label[0].toUpperCase()}`;
   })();
 
   return { initials, label, badge };

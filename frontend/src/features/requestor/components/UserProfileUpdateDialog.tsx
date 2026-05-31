@@ -95,9 +95,6 @@ export const UserProfileUpdateDialog = ({
             </div>
             <div className="space-y-1">
               <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">{displayName}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                This identity appears in activity feeds, signatures, and shared execution reports.
-              </p>
             </div>
           </div>
         </section>

@@ -269,7 +269,7 @@ export const RequestHistoryPanel = () => {
           ? "Jobs currently streaming subtasks to providers"
           : "No active workloads",
       successRateLabel:
-        successRateValue !== null ? `${successRateValue}%` : "—",
+        successRateValue !== null ? `${successRateValue}%` : "0%",
       successHelper:
         tasksInLast24h.length > 0
           ? `${completedLast24h}/${tasksInLast24h.length} completed in last 24h`
