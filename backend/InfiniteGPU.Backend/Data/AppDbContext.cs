@@ -97,7 +97,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         builder.Entity<Device>(entity =>
         {
             entity.HasKey(e => e.Id);
-            entity.HasIndex(e => e.DeviceIdentifier).IsUnique();
+            entity.HasIndex(e => new { e.DeviceIdentifier, e.ProviderUserId }).IsUnique();
             entity.HasIndex(e => e.ProviderUserId);
             entity.Property(e => e.DeviceIdentifier)
                 .HasMaxLength(128);
