@@ -12,9 +12,6 @@ import { UpdatePrompt } from "../components/UpdatePrompt";
 import { useSignalRRefresh } from "../hooks/useSignalRRefresh";
 import scalerize from "../../assets/logo-blue.png";
 
-const capitalize = (value: string) =>
-  value.length === 0 ? "" : value[0].toUpperCase() + value.slice(1);
-
 const deriveNameParts = (user: AuthUser | null) => {
   if (user?.firstName && user?.lastName) {
     return { firstName: user.firstName, lastName: user.lastName };

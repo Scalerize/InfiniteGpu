@@ -78,8 +78,7 @@ const formatCurrency = (value: number) =>
 
 const formatDate = (iso?: string | null) => {
   if (!iso) return "—";
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "—" : getRelativeTime(date);
+  return Number.isNaN(new Date(iso).getTime()) ? "—" : getRelativeTime(iso);
 };
 
 const resolveArtifactName = (url?: string | null) => {

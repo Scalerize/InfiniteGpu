@@ -13,8 +13,7 @@ interface TimelineEventsDialogProps {
 }
 
 const formatDate = (iso: string) => {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "—" : getRelativeTime(date);
+  return Number.isNaN(new Date(iso).getTime()) ? "—" : getRelativeTime(iso);
 };
 
 const formatMetadata = (metadataJson?: string | null) => {

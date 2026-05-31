@@ -126,12 +126,7 @@ const formatDurationFromSeconds = (durationSeconds: number) => {
 };
 
 const formatStartedAtLabel = (iso: string) => {
-  const date = parseDate(iso);
-  if (!date) {
-    return "—";
-  }
-
-  return getRelativeTime(date);
+  return parseDate(iso) ? getRelativeTime(iso) : "—";
 };
 
 const resolveArtifactName = (url: string) => {
