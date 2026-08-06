@@ -180,7 +180,8 @@ export const NewTaskRequestDialog = ({
   const [inferenceBindingMode, setInferenceBindingMode] = useState<
     "manual" | "api"
   >("manual");
-  const publicApiDocUrl = "/public-inference-api.html";
+  const publicApiDocUrl =
+    "https://www.infinite-gpu.scalerize.fr/public-inference-api.html";
   const [realApiKey, setRealApiKey] = useState<string | null>(null);
   const [apiKeyCopied, setApiKeyCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
